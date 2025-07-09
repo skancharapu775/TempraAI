@@ -23,7 +23,8 @@ def create_openai_client():
 
 def get_intent(client, message):
     role = '''
-        Based on the intent of the message return one of these: "Schedule", "Remind", "Email", "General"
+        Based on the intent of the message return one of these: 
+        "AddSchedule", "EditSchedule "AddReminder", "SummarizeEmail", "DraftEmail", "EditEmailDraft"
     '''
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
