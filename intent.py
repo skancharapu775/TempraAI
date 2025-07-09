@@ -1,31 +1,30 @@
 from openai import OpenAI
 import os
+from emails import *
 
 # Client message: change for testing
-MESSAGE = "Hello, schedule me an event tomorrow from 9-5"
+MESSAGE = "Send an email to John Doe to remind him about the meeting tomorrow"
 
 def main():
-    # Initialize OpenAI client with the new API
-    intent = get_intent(MESSAGE)
+    client = create_openai_client()
+    intent = get_intent(client, MESSAGE)
+
+    if intent == "Email":
+        draft_email(client, MESSAGE)
+
     print(intent)
 
-def get_intent(message):
-
-    # Get API key from environment variable
+def create_openai_client():
     api_key = os.getenv("OPENAI_API_KEY")
-
-    # make sure you run -> export OPENAI_API_KEY="key"
     if not api_key:
         print("OPENAI_API_KEY environment variable not set")
-        return
+        exit(1)
+    return OpenAI(api_key=api_key)
 
-    client = OpenAI(api_key=api_key)
-
+def get_intent(client, message):
     role = '''
-        Based on the intent of the message return one of these: "Schedule", "Remind", "Miscalleneous"
+        Based on the intent of the message return one of these: "Schedule", "Remind", "Email", "General"
     '''
-
-    # Make OpenAI API call using the new syntax
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
@@ -35,12 +34,8 @@ def get_intent(message):
         max_tokens=20,
         temperature=0.3
     )
-        
-    # Extract the suggested price from the response
     content = response.choices[0].message.content.strip()
     return content
-        
-    
 
 if __name__ == "__main__":
     main()
