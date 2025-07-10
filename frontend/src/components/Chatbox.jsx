@@ -1,24 +1,99 @@
 import React from 'react'
 import { useState, useRef, useEffect } from "react";
 import { ArrowUp } from 'lucide-react';
+import { handleScheduleIntent } from '../handlers/intenthandlers';
 
 const Chatbox = () => {
     const [messages, setMessages] = useState([]);
+    const [scheduleDraft, _setScheduleDraft] = useState([]);
+    const scheduleDraftRef = useRef(null);
+    const setScheduleDraft = (draft) => {
+    scheduleDraftRef.current = draft;   // keep latest in ref
+    _setScheduleDraft(draft);
+    };
     const [input, setInput] = useState("");
+    const [currentIntent, setCurrentIntent] = useState(null);
     const messagesEndRef = useRef(null);
-    const sendMessage = () => {
+
+    const processMessage = async (newMessage) =>
+    {
+        try {
+            // Classify intent
+            const intentRes = await fetch("http://localhost:8000/classify-intent", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ message: newMessage.content }),
+            });
+        
+            const { intent } = await intentRes.json();
+        
+            // 🧠 Step 2: Route based on intent
+            switch (intent) {
+              case "Schedule":
+                setCurrentIntent("Schedule")
+                await handleScheduleIntent(newMessage.content, setMessages, scheduleDraftRef.current, setScheduleDraft);
+                break;
+            //   case "Email":
+            //     await handleEmailIntent(newMessage);
+            //     break;
+            //   case "Remind":
+            //     await handleReminderIntent(newMessage);
+            //     break;
+            //   case "General":
+            //   default:
+            //     await handleGeneralIntent(newMessage);
+            //     break;
+            }
+          } catch (error) {
+            console.error("Intent classification failed:", error);
+            setMessages((prev) => [
+              ...prev,
+              { role: "assistant", content: "Oops! Something went wrong. Try again later." },
+            ]);
+          }
+    }
+
+    const sendMessage = async () => {
         if (!input.trim()) return;
     
         const newMessage = { role: "user", content: input };
         setMessages((prev) => [...prev, newMessage]);
-        setTimeout(() => {
-            setMessages((prev) => [
-              ...prev,
-              { role: "assistant", content: "Processing your request..." },
-            ]);
-          }, 300);
-
         setInput("");
+        if (!currentIntent) {
+            await processMessage(newMessage);
+        } else {
+            const res = await fetch("http://localhost:8000/follow-up-intent", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ current_intent: currentIntent, message: newMessage.content }),
+              });
+              const { decision } = await res.json();
+            if (decision === "EXIT") {
+                setCurrentIntent(null);
+                setScheduleDraft(null);
+                await processMessage(newMessage);
+            }
+            else 
+            {
+                switch (currentIntent) {
+                    case "Schedule":
+                      await handleScheduleIntent(newMessage.content, setMessages, scheduleDraftRef.current, setScheduleDraft);
+                      break;
+                  //   case "Email":
+                  //     await handleEmailIntent(newMessage);
+                  //     break;
+                  //   case "Remind":
+                  //     await handleReminderIntent(newMessage);
+                  //     break;
+                  //   case "General":
+                  //   default:
+                  //     await handleGeneralIntent(newMessage);
+                  //     break;
+                  }
+            }
+            
+        }
+        
     }
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
