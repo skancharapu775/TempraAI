@@ -1,6 +1,6 @@
 import React from 'react'
 import { useState, useRef, useEffect } from "react";
-import Navbar from './Navbar';
+import { ArrowUp } from 'lucide-react';
 
 const Chatbox = () => {
     const [messages, setMessages] = useState([]);
@@ -14,7 +14,6 @@ const Chatbox = () => {
         setTimeout(() => {
             setMessages((prev) => [
               ...prev,
-              { role: "user", content: input },
               { role: "assistant", content: "Processing your request..." },
             ]);
           }, 300);
@@ -32,15 +31,13 @@ const Chatbox = () => {
         }
       };
   return (
-    <div className="flex flex-col h-full max-w-2xl mx-auto bg-base-100">
+    <div className="flex flex-col h-full max-w-3xl mx-auto bg-base-100">
     {/* Chat messages */}
     <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 scrollbar-hide">
       {messages.map((msg, i) => (
         <div key={i} className={`chat ${msg.role === "user" ? "chat-end" : "chat-start"}`}>
           <div
-            className={`chat-bubble ${
-              msg.role === "user" ? "chat-bubble-primary" : "chat-bubble-secondary"
-            }`}
+            className="chat-bubble bg-[#444654] rounded-md p-4"
           >
             {msg.content}
           </div>
@@ -50,18 +47,20 @@ const Chatbox = () => {
     </div>
 
     {/* Input area */}
-    <div className="p-4 border-t bg-base-100 flex gap-2">
-      <textarea
-        className="textarea textarea-bordered w-full resize-none"
-        rows={2}
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={handleKeyPress}
-        placeholder="What do you want me to do?"
-      />
-      <button className="btn btn-neutral" onClick={sendMessage}>
-        Send
-      </button>
+    <div className="pb-12 bg-base-100">
+        <div className="flex items-center px-10 py-5 gap-3 bg-base-200 rounded-full shadow-md">
+            <textarea
+            className="w-full resize-none focus:outline-none"
+            rows={2}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyPress}
+            placeholder="What do you want me to do?"
+            />
+            <button className="btn btn-neutral btn-circle" onClick={sendMessage}>
+            <ArrowUp/>
+            </button>
+      </div>
     </div>
   </div>
   )
