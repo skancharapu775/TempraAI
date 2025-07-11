@@ -22,6 +22,7 @@ app.add_middleware(
 # Request/Response Models
 class IntentRequest(BaseModel):
     message: str
+    conversation_history: Optional[List[dict]] = None  # Add this
 
 class IntentResponse(BaseModel):
     intent: str
@@ -54,6 +55,7 @@ class ScheduleProposal(BaseModel):
     attendees: List[str] = []
     missing_fields: List[str] = []
     confirmation_message: str
+    type: str = "schedule"
 
 load_dotenv()
 
@@ -107,6 +109,8 @@ if there is any current known details, merge it with the JSON that you will retu
 
     try:
         data = json.loads(content) 
+        # Add type field for frontend change tracking
+        data["type"] = "schedule"
         print(data)
         return ScheduleProposal(**data)
     except Exception as e:
@@ -122,17 +126,28 @@ async def classify_intent(request: IntentRequest):
         role = '''
             Based on the intent of the message return one of these: "Schedule", "Remind", "Email", "General".
             Specifically ONLY ONE WORD RESPONSES FROM THESE CHOICES. 
-            If it is general, just answer it briefly. 
+            If it is general, just answer it like a human would. 
             If it is a task that is not schedule, remind, or email, and is instead a task to be performed with another third party
             say that it is not currently possible. 
         '''
         
+        # Build messages array with conversation history
+        messages = [{"role": "system", "content": role}]
+        
+        # Add conversation history if provided (filter out messages with null content)
+        if request.conversation_history:
+            filtered_history = [
+                msg for msg in request.conversation_history 
+                if msg.get("content") is not None and msg.get("content").strip() != ""
+            ]
+            messages.extend(filtered_history)
+        
+        # Add current message
+        messages.append({"role": "user", "content": request.message})
+        
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": role},
-                {"role": "user", "content": request.message}
-            ],
+            messages=messages,
             max_tokens=20,
             temperature=0.3
         )
@@ -148,6 +163,7 @@ async def classify_intent(request: IntentRequest):
 class FollowUpRequest(BaseModel):
     current_intent: str
     message: str
+    conversation_history: Optional[List[dict]] = None
 
 @app.post("/follow-up-intent")
 async def follow_up_intent(request: FollowUpRequest):
@@ -162,12 +178,23 @@ User message: "{request.message}"
 Reply only with "CONTINUE" or "EXIT".
     """
 
+    # Build messages array with conversation history
+    messages = [{"role": "system", "content": "Decide if a user is continuing their current intent or not."}]
+    
+    # Add conversation history if provided (filter out messages with null content)
+    if request.conversation_history:
+        filtered_history = [
+            msg for msg in request.conversation_history 
+            if msg.get("content") is not None and msg.get("content").strip() != ""
+        ]
+        messages.extend(filtered_history)
+    
+    # Add current message
+    messages.append({"role": "user", "content": prompt})
+
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "Decide if a user is continuing their current intent or not."},
-            {"role": "user", "content": prompt}
-        ],
+        messages=messages,
         max_tokens=1,
         temperature=0
     )
@@ -184,7 +211,7 @@ async def parse_schedule(request: ScheduleRequest):
         model="gpt-4",
         messages=[
             {"role": "system", "content": """
-You're an assistant that extracts meeting details from natural language and returns a JSON with title, start_time, end_time, and attendees (optional emails). Use ISO format for dates.
+            You're an assistant that extracts meeting details from natural language and returns a JSON with title, start_time, end_time, and attendees (optional emails). Use ISO format for dates.
             """},
             {"role": "user", "content": request.message}
         ],
@@ -203,15 +230,56 @@ You're an assistant that extracts meeting details from natural language and retu
 
 
 
+# Chat Endpoint for General Conversation
+class ChatRequest(BaseModel):
+    message: str
+    conversation_history: Optional[List[dict]] = None
+
+class ChatResponse(BaseModel):
+    response: str
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    try:
+        client = create_openai_client()
+        
+        # Build messages array with conversation history
+        messages = [{"role": "system", "content": "You are a helpful AI assistant. Be conversational and friendly."}]
+        
+        # Add conversation history if provided (filter out messages with null content)
+        if request.conversation_history:
+            filtered_history = [
+                msg for msg in request.conversation_history 
+                if msg.get("content") is not None and msg.get("content").strip() != ""
+            ]
+            messages.extend(filtered_history)
+        
+        # Add current message
+        messages.append({"role": "user", "content": request.message})
+        
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            max_tokens=300,
+            temperature=0.7
+        )
+        
+        response_text = response.choices[0].message.content.strip()
+        
+        return ChatResponse(response=response_text)
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error in chat: {str(e)}")
+
 # Email Drafting Endpoint
 @app.post("/draft-email", response_model=EmailResponse)
-async def draft_email_endpoint(request: EmailRequest):
+async def draft_email(request: EmailRequest):
     try:
         client = create_openai_client()
         
         # Generate email body using OpenAI
         prompt = f"""
-        Draft a professional email based on the following user request. Only output the email body, do not include any headers or signatures.
+        Draft an email based on the following user request. Only output the email body, do not include any headers or signatures.
         User request: {request.message}
         """
         
