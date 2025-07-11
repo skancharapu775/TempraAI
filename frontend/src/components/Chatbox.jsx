@@ -48,6 +48,90 @@ const Chatbox = () => {
     setShowAcceptDeny(data.showAcceptDeny || false);
   };
 
+  // Handle accept action
+  const handleAccept = async () => {
+    if (!pendingChanges) return;
+    
+    // Add user confirmation message
+    const confirmMessage = { role: "user", content: "Yes, that's correct" };
+    setMessages((prev) => [...prev, confirmMessage]);
+    
+    // Clear pending changes and hide buttons immediately
+    setPendingChanges(null);
+    setShowAcceptDeny(false);
+    
+    // Send acceptance to the dedicated endpoint
+    const requestBody = {
+      action: "accept",
+      session_id: "your-session-id",
+      change_details: pendingChanges, // Send the change details that were accepted
+      conversation_history: messages.slice(-HISTORY_WINDOW)
+    };
+
+    try {
+      const res = await fetch("http://localhost:8000/handle-change-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        // Add assistant confirmation
+        setMessages((prev) => [...prev, { role: "assistant", content: data.message }]);
+        setCurrentIntent(data.intent || null);
+      } else {
+        // Handle error
+        setMessages((prev) => [...prev, { role: "assistant", content: "Sorry, there was an error processing your request." }]);
+      }
+    } catch (error) {
+      console.error("Error handling accept:", error);
+      setMessages((prev) => [...prev, { role: "assistant", content: "Sorry, there was an error processing your request." }]);
+    }
+  };
+
+  // Handle deny action
+  const handleDeny = async () => {
+    if (!pendingChanges) return;
+    
+    // Add user rejection message
+    const rejectMessage = { role: "user", content: "No, let me start over" };
+    setMessages((prev) => [...prev, rejectMessage]);
+    
+    // Clear pending changes and hide buttons immediately
+    setPendingChanges(null);
+    setShowAcceptDeny(false);
+    
+    // Send denial to the dedicated endpoint
+    const requestBody = {
+      action: "deny",
+      session_id: "your-session-id",
+      change_details: pendingChanges, // Send the change details that were denied
+      conversation_history: messages.slice(-HISTORY_WINDOW)
+    };
+
+    try {
+      const res = await fetch("http://localhost:8000/handle-change-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        // Add assistant response
+        setMessages((prev) => [...prev, { role: "assistant", content: data.message }]);
+        setCurrentIntent(data.intent || null);
+      } else {
+        // Handle error
+        setMessages((prev) => [...prev, { role: "assistant", content: "Sorry, there was an error processing your request." }]);
+      }
+    } catch (error) {
+      console.error("Error handling deny:", error);
+      setMessages((prev) => [...prev, { role: "assistant", content: "Sorry, there was an error processing your request." }]);
+    }
+  };
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -76,8 +160,8 @@ const Chatbox = () => {
       {/* Accept/Deny UI if needed */}
       {showAcceptDeny && (
         <div className="flex justify-center gap-2 pb-4">
-          <button className="btn btn-success" onClick={() => {/* handle accept */}}>Accept</button>
-          <button className="btn btn-error" onClick={() => {/* handle deny */}}>Deny</button>
+          <button className="btn btn-success" onClick={handleAccept}>Accept</button>
+          <button className="btn btn-error" onClick={handleDeny}>Deny</button>
         </div>
       )}
 

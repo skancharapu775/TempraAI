@@ -48,6 +48,18 @@ class ProcessMessageResponse(BaseModel):
     intent: Optional[str] = None
     showAcceptDeny: bool = False
 
+# Request/Response Models for change actions
+class ChangeActionRequest(BaseModel):
+    action: str  # "accept" or "deny"
+    session_id: str
+    change_details: dict  # The pending changes being acted upon
+    conversation_history: Optional[List[dict]] = None
+
+class ChangeActionResponse(BaseModel):
+    success: bool
+    message: str
+    intent: Optional[str] = None
+
 load_dotenv()
 
 # Initialize OpenAI client
@@ -241,6 +253,63 @@ async def process_message(request: ProcessMessageRequest = Body(...)):
         showAcceptDeny=show_accept_deny
     )
 
+@app.post("/handle-change-action", response_model=ChangeActionResponse)
+async def handle_change_action(request: ChangeActionRequest):
+    """Handle accept/deny actions for pending changes"""
+    client = create_openai_client()
+    
+    if request.action.lower() == "accept":
+        # Handle acceptance
+        if request.change_details.get("type") == "schedule":
+            # Extract schedule details
+            title = request.change_details.get("title", "Meeting")
+            start_time = request.change_details.get("start_time")
+            end_time = request.change_details.get("end_time")
+            attendees = request.change_details.get("attendees", [])
+            
+            # Generate confirmation message
+            if start_time and end_time:
+                time_info = f"from {start_time} to {end_time}"
+            elif start_time:
+                time_info = f"at {start_time}"
+            else:
+                time_info = "at the specified time"
+            
+            attendee_info = ""
+            if attendees:
+                attendee_info = f" with {', '.join(attendees)}"
+            
+            message = f"Perfect! I've successfully scheduled '{title}' {time_info}{attendee_info}. Is there anything else I can help you with?"
+            
+            return ChangeActionResponse(
+                success=True,
+                message=message,
+                intent="General"  # Switch back to general conversation
+            )
+        else:
+            # Handle other change types (reminders, emails, etc.)
+            return ChangeActionResponse(
+                success=True,
+                message="Great! I've confirmed your request. Is there anything else I can help you with?",
+                intent="General"
+            )
+    
+    elif request.action.lower() == "deny":
+        # Handle denial
+        return ChangeActionResponse(
+            success=True,
+            message="No problem! Let me know if you'd like to try something else or if there's anything else I can help you with.",
+            intent="General"  # Switch back to general conversation
+        )
+    
+    else:
+        # Invalid action
+        return ChangeActionResponse(
+            success=False,
+            message="Invalid action. Please use 'accept' or 'deny'.",
+            intent=None
+        )
+
 # Health Check Endpoint
 @app.get("/health")
 async def health_check():
@@ -253,6 +322,7 @@ async def root():
         "message": "TempraAI API",
         "endpoints": {
             "process_message": "POST /process-message",
+            "handle_change_action": "POST /handle-change-action",
             "health": "GET /health"
         }
     }
