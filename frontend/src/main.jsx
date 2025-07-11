@@ -5,15 +5,20 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import App from './App.jsx'
 import Chatbox from './components/Chatbox.jsx'
 import Navbar from './components/Navbar.jsx'
+import { GoogleOAuthProvider } from '@react-oauth/google';
+import LoginPage from './pages/LoginPage.jsx';
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<App />}>
-          <Route index element={<Chatbox />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
-  </StrictMode>,
+    <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID}>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<App />}>
+            <Route index element={<Chatbox />} />
+            <Route path="login" element={<LoginPage />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </GoogleOAuthProvider>
+  </StrictMode>
 )

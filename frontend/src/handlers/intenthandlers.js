@@ -6,11 +6,10 @@ export const handleScheduleIntent = async (message, setMessages, scheduleDraft, 
         message,
         prior_state: scheduleDraft,
         }),
-
     });
   
     const proposal = await response.json();
-    console.log(proposal.confirmation_message )
+    // console.log(proposal.confirmation_message )
     setScheduleDraft(proposal);
 
     if (proposal.missing_fields.length === 0) {

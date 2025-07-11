@@ -141,4 +141,4 @@ const Chatbox = () => {
   )
 }
 
-export default Chatbox
+export default Chatbox;

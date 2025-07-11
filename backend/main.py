@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv
 from typing import Optional, List
+from auth import router as auth_router
 import json
 import os
 # from emails import create_gmail_draft, gmail_authenticate
@@ -18,6 +19,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(auth_router, prefix="/auth")
 
 # Request/Response Models
 class IntentRequest(BaseModel):
