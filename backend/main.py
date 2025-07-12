@@ -95,22 +95,42 @@ async def classify_intent_for_message(client, message: str, conversation_history
 
 async def check_intent_continuation(client, current_intent: str, message: str, conversation_history: List[dict] = None) -> bool:
     """Check if user wants to continue current intent or switch topics"""
-    prompt = f"""
-You are managing a smart assistant's conversation. The current task is: {current_intent}.
-Determine whether the user's message continues this task or changes topics.
+    system_prompt = f"""
+You are managing a smart assistant's conversation. The current active task/intent is: {current_intent}.
 
-User message: "{message}"
+Your job is to determine if the user's message continues working on this current task or if they want to switch to a different topic.
 
-Reply only with "CONTINUE" or "EXIT".
-    """
-    messages = [{"role": "system", "content": "Decide if a user is continuing their current intent or not."}]
+Available intents:
+- "Schedule": Scheduling meetings, appointments, or events
+- "Remind": Setting reminders or creating todos
+- "Email": Sending, drafting, or composing emails
+- "General": General conversation, questions, or other topics
+
+IMPORTANT: If the user mentions scheduling, reminders, or emails while in General intent, they are switching topics and you should respond "EXIT".
+
+If the user's message:
+- Continues providing information for the current task → respond "CONTINUE"
+- Asks to do something different or changes topic → respond "EXIT"
+- Mentions scheduling, reminders, or emails while in General → respond "EXIT"
+- Is unclear or could go either way → respond "EXIT" (default to switching)
+
+Respond with ONLY "CONTINUE" or "EXIT".
+"""
+
+    messages = [{"role": "system", "content": system_prompt}]
+    
+    # Add recent conversation context (last 3 messages to avoid confusion)
     if conversation_history:
+        recent_history = conversation_history[-3:]  # Only last 3 messages
         filtered_history = [
-            msg for msg in conversation_history
+            msg for msg in recent_history
             if msg.get("content") is not None and msg.get("content").strip() != ""
         ]
         messages.extend(filtered_history)
-    messages.append({"role": "user", "content": prompt})
+    
+    messages.append({"role": "user", "content": message})
+    
+    print(f"DEBUG: Checking intent continuation for '{current_intent}' with message: '{message}'")
     
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
@@ -119,11 +139,11 @@ Reply only with "CONTINUE" or "EXIT".
         temperature=0
     )
     decision = response.choices[0].message.content.strip().upper()
-    print(f"Intent continuation check: {decision}")
+    print(f"DEBUG: Intent continuation decision: {decision}")
     return decision == "CONTINUE"
 
-async def handle_email_intent(client, message: str, conversation_history: List[dict] = None) -> str:
-    """Handle email intent and return reply"""
+async def handle_email_intent(client, message: str, conversation_history: List[dict] = None) -> tuple[str, dict, bool]:
+    """Handle email intent and return (reply, pending_changes, show_accept_deny)"""
     messages = [{"role": "system", "content": "You are a helpful life secretary. Be open and friendly."}]
     
     if conversation_history:
@@ -134,16 +154,16 @@ async def handle_email_intent(client, message: str, conversation_history: List[d
         messages.extend(filtered_history)
     
     # Detect if user wants to create an email draft, send an email, or say not supported
-
     messages.append({"role": "user", "content": message})
 
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=messages,
-        max_tokens=10,
-        temperature=0
+        max_tokens=300,
+        temperature=0.7
     )
-    return response.choices[0].message.content.strip(), None, False
+    reply = response.choices[0].message.content.strip()
+    return reply, None, False
 
 async def handle_schedule_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
     """Handle scheduling intent and return (reply, pending_changes, show_accept_deny)"""
@@ -192,7 +212,7 @@ if there is any current known details, merge it with the JSON that you will retu
 
 async def handle_general_chat(client, message: str, conversation_history: List[dict] = None) -> str:
     """Handle general chat and return reply"""
-    messages = [{"role": "system", "content": "You are a helpful life secretary. Be open and friendly."}]
+    messages = [{"role": "system", "content": "You are a helpful life secretary, but be comedic like TARS from the movie Interstellar."}]
     
     if conversation_history:
         filtered_history = [
