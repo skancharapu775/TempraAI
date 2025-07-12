@@ -203,6 +203,80 @@ If there are any current known details, merge them with the JSON that you will r
     except Exception as e:
         return f"Sorry, I couldn't parse the email details. Could you please provide the email information again?", None, False
 
+async def handle_remind_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
+    """Handle reminder intent and return (reply, pending_changes, show_accept_deny)"""
+    system_prompt = """
+You are an assistant that extracts reminder details from the user's inputs. Your job is to guess title, description, due_date, due_time, priority, category, and recurrence pattern from natural text.
+
+REQUIRED FIELDS: title, due_date, due_time, recurrence
+OPTIONAL FIELDS: description, priority, category
+
+RECURRENCE PATTERNS:
+- "once": One-time reminder (default)
+- "daily": Every day
+- "weekly": Every week on the same day
+- "monthly": Every month on the same date
+- "yearly": Every year on the same date
+- "every_other_day": Every other day
+- "weekdays": Monday through Friday
+- "weekends": Saturday and Sunday
+- "custom": Custom pattern (specify in description)
+
+Reply *only* with valid JSON. Example:
+{
+  "title": "...",
+  "description": "...",   // optional
+  "due_date": "...",      // date in YYYY-MM-DD format
+  "due_time": "...",      // time in HH:MM format
+  "priority": "...",      // optional: "high", "medium", "low"
+  "category": "...",      // optional: "work", "personal", "health", etc.
+  "recurrence": "...",    // optional: "once", "daily", "weekly", "monthly", "yearly", "every_other_day", "weekdays", "weekends", "custom"
+  "missing_fields": ["title", ...], // only include required fields that are missing
+  "confirmation_message": "..."
+}
+
+If there are any current known details, merge them with the JSON that you will return.
+"""
+
+    user_prompt = f"User message: {message}"
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+    if pending_changes:
+        messages.append({
+            "role": "assistant",
+            "content": f"Current known details (JSON): {json.dumps(pending_changes)}"
+        })
+
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=messages,
+        temperature=0.4
+    )
+
+    content = response.choices[0].message.content.strip()
+    
+    try:
+        data = json.loads(content)
+        data["type"] = "reminder"
+        print(f"Reminder proposal: {data}")
+        
+        # Check if all required fields are present
+        missing_fields = data.get("missing_fields", [])
+        show_accept_deny = len(missing_fields) == 0
+        
+        # Format current details for display
+        current_details = format_reminder_details(data)
+        confirmation_message = data["confirmation_message"]
+        
+        if current_details:
+            confirmation_message += f"\n\n---\n**📋 Current Details:**\n{current_details}\n---"
+        
+        return confirmation_message, data, show_accept_deny
+    except Exception as e:
+        return f"Sorry, I couldn't parse the reminder details. Could you please provide the reminder information again?", None, False
+
 async def handle_schedule_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
     """Handle scheduling intent and return (reply, pending_changes, show_accept_deny)"""
     system_prompt = """
@@ -322,6 +396,10 @@ async def process_message(request: ProcessMessageRequest = Body(...)):
         reply, pending_changes, show_accept_deny = await handle_email_intent(
             client, request.message, request.pending_changes
         )
+    elif intent == "Remind":
+        reply, pending_changes, show_accept_deny = await handle_remind_intent(
+            client, request.message, request.pending_changes
+        )
     elif intent == "General":
         reply = await handle_general_chat(
             client, request.message, request.conversation_history
@@ -392,8 +470,46 @@ async def handle_change_action(request: ChangeActionRequest):
                 message=message,
                 intent="General"  # Switch back to general conversation
             )
+        elif request.change_details.get("type") == "reminder":
+            # Extract reminder details
+            title = request.change_details.get("title", "Reminder")
+            description = request.change_details.get("description", "")
+            due_date = request.change_details.get("due_date", "")
+            due_time = request.change_details.get("due_time", "")
+            priority = request.change_details.get("priority", "")
+            category = request.change_details.get("category", "")
+            recurrence = request.change_details.get("recurrence", "once")
+            
+            # Generate confirmation message
+            time_info = ""
+            if due_date and due_time:
+                time_info = f" due on {due_date} at {due_time}"
+            elif due_date:
+                time_info = f" due on {due_date}"
+            elif due_time:
+                time_info = f" due at {due_time}"
+            
+            priority_info = ""
+            if priority:
+                priority_info = f" (Priority: {priority})"
+            
+            category_info = ""
+            if category:
+                category_info = f" in category '{category}'"
+            
+            recurrence_info = ""
+            if recurrence and recurrence != "once":
+                recurrence_info = f" (Recurring: {recurrence})"
+            
+            message = f"Perfect! I've successfully created a reminder '{title}'{time_info}{recurrence_info}{priority_info}{category_info}. Is there anything else I can help you with?"
+            
+            return ChangeActionResponse(
+                success=True,
+                message=message,
+                intent="General"  # Switch back to general conversation
+            )
         else:
-            # Handle other change types (reminders, emails, etc.)
+            # Handle other change types
             return ChangeActionResponse(
                 success=True,
                 message="Great! I've confirmed your request. Is there anything else I can help you with?",

@@ -75,4 +75,61 @@ def format_email_details(data: dict) -> str:
     # Use markdown list format for better rendering
     if details:
         return "\n".join([f"- {detail}" for detail in details])
+    return ""
+
+def format_reminder_details(data: dict) -> str:
+    """Format reminder details for display"""
+    details = []
+    
+    if data.get("title"):
+        details.append(f"📝 **Title:** {data['title']}")
+    
+    if data.get("description"):
+        # Truncate description if too long
+        description = data["description"]
+        if len(description) > 100:
+            description = description[:100] + "..."
+        details.append(f"📄 **Description:** {description}")
+    
+    if data.get("due_date"):
+        due_date = data["due_date"]
+        details.append(f"📅 **Due Date:** {due_date}")
+    
+    if data.get("due_time"):
+        due_time = data["due_time"]
+        details.append(f"⏰ **Due Time:** {due_time}")
+    
+    if data.get("priority"):
+        priority = data["priority"]
+        priority_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(priority.lower(), "⚪")
+        details.append(f"{priority_emoji} **Priority:** {priority}")
+    
+    if data.get("category"):
+        category = data["category"]
+        details.append(f"🏷️ **Category:** {category}")
+    
+    if data.get("recurrence"):
+        recurrence = data["recurrence"]
+        recurrence_emoji = {
+            "once": "⚪",
+            "daily": "🔄",
+            "weekly": "📅",
+            "monthly": "📆",
+            "yearly": "🎯",
+            "every_other_day": "⏭️",
+            "weekdays": "💼",
+            "weekends": "🏖️",
+            "custom": "🎨"
+        }.get(recurrence.lower(), "⚪")
+        details.append(f"{recurrence_emoji} **Recurrence:** {recurrence}")
+    
+    if data.get("missing_fields"):
+        missing = data["missing_fields"]
+        if missing:
+            missing_str = ", ".join(missing)
+            details.append(f"❌ **Missing:** {missing_str}")
+    
+    # Use markdown list format for better rendering
+    if details:
+        return "\n".join([f"- {detail}" for detail in details])
     return "" 
