@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { ArrowUp } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 
 const Chatbox = () => {
   const [messages, setMessages] = useState([]);
@@ -144,13 +145,26 @@ const Chatbox = () => {
   };
 
   return (
-    <div className="flex flex-col h-full max-w-3xl mx-auto bg-base-100">
+    <div className="flex flex-col h-full max-w-3xl mx-auto bg-black">
       {/* Chat messages */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 scrollbar-hide">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 scrollbar-hide bg-black">
         {messages.map((msg, i) => (
           <div key={i} className={`chat ${msg.role === "user" ? "chat-end" : "chat-start"}`}>
-            <div className="chat-bubble bg-[#444654] rounded-md p-4">
-              {msg.content}
+            <div className={`chat-bubble rounded-md p-4 ${msg.role === "user" ? "bg-blue-600 text-white" : "bg-gray-800 text-white"}`}>
+              <div className="prose prose-invert max-w-none">
+                <ReactMarkdown 
+                  components={{
+                    strong: ({children}) => <strong className="font-bold text-blue-300">{children}</strong>,
+                    p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
+                    hr: () => <hr className="border-gray-600 my-3" />,
+                    code: ({children}) => <code className="bg-gray-700 px-1 py-0.5 rounded text-sm">{children}</code>,
+                    li: ({children}) => <li className="mb-1">{children}</li>,
+                    ul: ({children}) => <ul className="list-disc list-inside space-y-1">{children}</ul>
+                  }}
+                >
+                  {msg.content}
+                </ReactMarkdown>
+              </div>
             </div>
           </div>
         ))}
@@ -166,17 +180,17 @@ const Chatbox = () => {
       )}
 
       {/* Input area */}
-      <div className="pb-12 bg-base-100">
-        <div className="flex items-center px-10 py-5 gap-3 bg-base-200 rounded-full shadow-md">
+      <div className="pb-12 bg-black">
+        <div className="flex items-center px-10 py-5 gap-3 bg-gray-800 rounded-full shadow-md">
           <textarea
-            className="w-full resize-none focus:outline-none"
+            className="w-full resize-none focus:outline-none bg-transparent text-white placeholder-gray-400"
             rows={2}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyPress}
             placeholder="What do you want me to do?"
           />
-          <button className="btn btn-neutral btn-circle" onClick={handleSendMessage}>
+          <button className="btn btn-neutral btn-circle bg-gray-700 hover:bg-gray-600" onClick={handleSendMessage}>
             <ArrowUp />
           </button>
         </div>

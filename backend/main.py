@@ -5,6 +5,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from typing import Optional, List
 from auth import router as auth_router
+from format import *
 import json
 import os
 # from emails import create_gmail_draft, gmail_authenticate
@@ -142,28 +143,65 @@ Respond with ONLY "CONTINUE" or "EXIT".
     print(f"DEBUG: Intent continuation decision: {decision}")
     return decision == "CONTINUE"
 
-async def handle_email_intent(client, message: str, conversation_history: List[dict] = None) -> tuple[str, dict, bool]:
+async def handle_email_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
     """Handle email intent and return (reply, pending_changes, show_accept_deny)"""
-    messages = [{"role": "system", "content": "You are a helpful life secretary. Be open and friendly."}]
-    
-    if conversation_history:
-        filtered_history = [
-            msg for msg in conversation_history
-            if msg.get("content") is not None and msg.get("content").strip() != ""
-        ]
-        messages.extend(filtered_history)
-    
-    # Detect if user wants to create an email draft, send an email, or say not supported
-    messages.append({"role": "user", "content": message})
+    system_prompt = """
+You are an assistant that extracts email details from the user's inputs. Your job is to guess subject, recipient, body content, and any attachments from natural text.
+Then, list any missing or unclear fields and generate a polite confirmation message asking the user to confirm or correct.
+
+REQUIRED FIELDS: subject, recipient, body
+OPTIONAL FIELDS: attachments
+
+Reply *only* with valid JSON. Example:
+{
+  "subject": "...",
+  "recipient": "...",   // email address or name
+  "body": "...",        // email body content
+  "attachments": [],    // optional list of attachments
+  "missing_fields": ["recipient", ...], // only include required fields that are missing
+  "confirmation_message": "..."
+}
+If there are any current known details, merge them with the JSON that you will return.
+"""
+
+    user_prompt = f"User message: {message}"
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+    if pending_changes:
+        messages.append({
+            "role": "assistant",
+            "content": f"Current known details (JSON): {json.dumps(pending_changes)}"
+        })
 
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=messages,
-        max_tokens=300,
-        temperature=0.7
+        temperature=0.4
     )
-    reply = response.choices[0].message.content.strip()
-    return reply, None, False
+
+    content = response.choices[0].message.content.strip()
+    
+    try:
+        data = json.loads(content)
+        data["type"] = "email"
+        print(f"Email proposal: {data}")
+        
+        # Only show accept/deny if all required fields are present
+        missing_fields = data.get("missing_fields", [])
+        show_accept_deny = len(missing_fields) == 0
+        
+        # Format current details for display
+        current_details = format_email_details(data)
+        confirmation_message = data["confirmation_message"]
+        
+        if current_details:
+            confirmation_message += f"\n\n---\n**📋 Current Details:**\n{current_details}\n---"
+        
+        return confirmation_message, data, show_accept_deny
+    except Exception as e:
+        return f"Sorry, I couldn't parse the email details. Could you please provide the email information again?", None, False
 
 async def handle_schedule_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
     """Handle scheduling intent and return (reply, pending_changes, show_accept_deny)"""
@@ -171,16 +209,20 @@ async def handle_schedule_intent(client, message: str, pending_changes: dict = N
 You are an assistant that extracts scheduling details from the user's last inputs. Your job is to guess title, start_time, end_time, and attendees from natural text. 
 Then, list any missing or unclear fields and generate a polite confirmation message asking the user to confirm or correct.
 Use ISO 8601 format for times.
+
+REQUIRED FIELDS: title, start_time
+OPTIONAL FIELDS: end_time, attendees
+
 Reply *only* with valid JSON. Example:
 {
   "title": "...",
   "start_time": "...",   // ISO-8601
-  "end_time": "...",     // ISO-8601 or null
-  "attendees": ["email1", ...], OPTIONAL. Do not ask for it unless the user mentions to address other attendees.
-  "missing_fields": ["start_time", ...],
+  "end_time": "...",     // ISO-8601 or null (optional)
+  "attendees": ["email1", ...], // optional
+  "missing_fields": ["start_time", ...], // only include required fields that are missing
   "confirmation_message": "..."
 }
-if there is any current known details, merge it with the JSON that you will return.
+If there are any current known details, merge them with the JSON that you will return.
 """
 
     user_prompt = f"User message: {message}"
@@ -206,13 +248,25 @@ if there is any current known details, merge it with the JSON that you will retu
         data = json.loads(content)
         data["type"] = "schedule"
         print(f"Schedule proposal: {data}")
-        return data["confirmation_message"], data, True
+        
+        # Only show accept/deny if all required fields are present
+        missing_fields = data.get("missing_fields", [])
+        show_accept_deny = len(missing_fields) == 0
+        
+        # Format current details for display
+        current_details = format_schedule_details(data)
+        confirmation_message = data["confirmation_message"]
+        
+        if current_details:
+            confirmation_message += f"\n\n---\n**📋 Current Details:**\n{current_details}\n---"
+        
+        return confirmation_message, data, show_accept_deny
     except Exception as e:
         return f"Sorry, I couldn't parse the scheduling details. Could you please provide the meeting information again?", None, False
 
 async def handle_general_chat(client, message: str, conversation_history: List[dict] = None) -> str:
     """Handle general chat and return reply"""
-    messages = [{"role": "system", "content": "You are a helpful life secretary, but be comedic like TARS from the movie Interstellar."}]
+    messages = [{"role": "system", "content": "You are a helpful life secretary, but be comedic (not cringe) like TARS from the movie Interstellar."}]
     
     if conversation_history:
         filtered_history = [
@@ -266,7 +320,7 @@ async def process_message(request: ProcessMessageRequest = Body(...)):
         )
     elif intent == "Email":
         reply, pending_changes, show_accept_deny = await handle_email_intent(
-            client, request.message, request.conversation_history
+            client, request.message, request.pending_changes
         )
     elif intent == "General":
         reply = await handle_general_chat(
@@ -312,6 +366,26 @@ async def handle_change_action(request: ChangeActionRequest):
                 attendee_info = f" with {', '.join(attendees)}"
             
             message = f"Perfect! I've successfully scheduled '{title}' {time_info}{attendee_info}. Is there anything else I can help you with?"
+            
+            return ChangeActionResponse(
+                success=True,
+                message=message,
+                intent="General"  # Switch back to general conversation
+            )
+        elif request.change_details.get("type") == "email":
+            # Extract email details
+            subject = request.change_details.get("subject", "Email")
+            recipient = request.change_details.get("recipient", "recipient")
+            body = request.change_details.get("body", "")
+            attachments = request.change_details.get("attachments", [])
+            
+            # Generate confirmation message
+            recipient_info = f" to {recipient}" if recipient else ""
+            attachment_info = ""
+            if attachments:
+                attachment_info = f" with {len(attachments)} attachment(s)"
+            
+            message = f"Perfect! I've successfully created an email draft with subject '{subject}'{recipient_info}{attachment_info}. The email has been saved as a draft. Is there anything else I can help you with?"
             
             return ChangeActionResponse(
                 success=True,

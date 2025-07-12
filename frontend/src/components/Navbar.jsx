@@ -8,8 +8,8 @@ function Navbar() {
 
     return (
         <header
-          className="border-b border-base-300 w-full top-0 z-50  h-19
-        backdrop-blur-lg bg-slate-900"
+          className="border-b border-gray-700 w-full top-0 z-50  h-19
+        backdrop-blur-lg bg-black"
         >
           <div className="container mx-auto px-4 h-18">
             <div className="flex items-center justify-between h-full">
