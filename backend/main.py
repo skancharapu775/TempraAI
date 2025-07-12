@@ -11,6 +11,7 @@ import os
 # from email.mime.text import MIMEText
 import base64
 
+
 app = FastAPI(title="TempraAI API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
@@ -20,20 +21,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth_router, prefix="/auth")
-
-# Request/Response Models
-class ScheduleRequest(BaseModel):
-    message: str
-    prior_state: Optional[dict] = None
-
-class ScheduleProposal(BaseModel):
-    title: Optional[str] = None
-    start_time: Optional[str] = None
-    end_time: Optional[str] = None
-    attendees: List[str] = []
-    missing_fields: List[str] = []
-    confirmation_message: str
-    type: str = "schedule"
 
 class ProcessMessageRequest(BaseModel):
     message: str
@@ -112,8 +99,6 @@ async def check_intent_continuation(client, current_intent: str, message: str, c
 You are managing a smart assistant's conversation. The current task is: {current_intent}.
 Determine whether the user's message continues this task or changes topics.
 
-IMPORTANT: If the user mentions scheduling, reminders, or emails, they are switching to a new intent, even if they were previously in general conversation.
-
 User message: "{message}"
 
 Reply only with "CONTINUE" or "EXIT".
@@ -136,6 +121,29 @@ Reply only with "CONTINUE" or "EXIT".
     decision = response.choices[0].message.content.strip().upper()
     print(f"Intent continuation check: {decision}")
     return decision == "CONTINUE"
+
+async def handle_email_intent(client, message: str, conversation_history: List[dict] = None) -> str:
+    """Handle email intent and return reply"""
+    messages = [{"role": "system", "content": "You are a helpful life secretary. Be open and friendly."}]
+    
+    if conversation_history:
+        filtered_history = [
+            msg for msg in conversation_history
+            if msg.get("content") is not None and msg.get("content").strip() != ""
+        ]
+        messages.extend(filtered_history)
+    
+    # Detect if user wants to create an email draft, send an email, or say not supported
+
+    messages.append({"role": "user", "content": message})
+
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=messages,
+        max_tokens=10,
+        temperature=0
+    )
+    return response.choices[0].message.content.strip(), None, False
 
 async def handle_schedule_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
     """Handle scheduling intent and return (reply, pending_changes, show_accept_deny)"""
@@ -235,6 +243,10 @@ async def process_message(request: ProcessMessageRequest = Body(...)):
     if intent == "Schedule":
         reply, pending_changes, show_accept_deny = await handle_schedule_intent(
             client, request.message, request.pending_changes
+        )
+    elif intent == "Email":
+        reply, pending_changes, show_accept_deny = await handle_email_intent(
+            client, request.message, request.conversation_history
         )
     elif intent == "General":
         reply = await handle_general_chat(
