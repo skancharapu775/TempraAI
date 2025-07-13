@@ -65,6 +65,18 @@ class EmailService:
         
         # self.client = GraphClient(credential=credential)
 
+    def setup_gmail_with_token(self, access_token: str, refresh_token: str, client_id: str, client_secret: str):
+        """Setup Gmail API client using provided OAuth tokens"""
+        creds = Credentials(
+            token=access_token,
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=GMAIL_SCOPES
+        )
+        self.client = build('gmail', 'v1', credentials=creds)
+
 class EmailIntentHandler:
     def __init__(self, email_service: EmailService):
         self.email_service = email_service
@@ -199,55 +211,102 @@ class EmailIntentHandler:
             return f"Sorry, I couldn't get priority emails: {str(e)}", None, False
     
     async def organize_emails(self, message: str) -> Tuple[str, dict, bool]:
-        """Organize emails into folders/labels"""
+        """Organize emails into folders/labels with confirmation"""
         try:
-            # Extract organization request from message
-            organization_prompt = f"""
-            Extract the organization details from this message: "{message}"
+            system_prompt = """
+            You are an assistant that extracts email organization details from the user's inputs. Your job is to identify which folders to create, which existing folders to use, 
+            and the criteria for organizing emails. Then, generate a polite confirmation message asking the user to confirm the organization plan.
+
+            REQUIRED FIELDS: criteria, existing_folders
+            OPTIONAL FIELDS: created_folders, email_count
+
+            FOLDER EXAMPLES:
+            - "Work" - Work-related emails
+            - "Personal" - Personal emails  
+            - "Projects" - Project-specific emails
+            - "Inbox" - Default folder
+            - "Archive" - Archived emails
+            - "Finance" - Financial emails
+            - "Travel" - Travel-related emails
+
+            Reply *only* with valid JSON. Example:
+            {
+                "created_folders": ["Work Projects", "Personal Finance"],
+                "existing_folders": ["Inbox", "Archive"],
+                "criteria": "organize work emails into Work Projects folder",
+                "email_count": 50,
+                "missing_fields": ["criteria"],
+                "confirmation_message": "..."
+            }
             
-            Return JSON with:
-            - "action": "create_folder", "move_emails", or "auto_organize"
-            - "folder_name": name of folder to create or use
-            - "criteria": criteria for organizing (if auto_organize)
-            - "email_count": number of emails to organize (if specified)
-            
-            Example: {{"action": "create_folder", "folder_name": "Work Projects"}}
+            If there are any current known details, merge them with the JSON that you will return.
             """
-            
+
+            user_prompt = f"User message: {message}"
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+
             response = self.openai_client.chat.completions.create(
                 model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": organization_prompt}],
-                max_tokens=200,
+                messages=messages,
+                max_tokens=300,
                 temperature=0.3
             )
             
             try:
                 org_data = json.loads(response.choices[0].message.content.strip())
             except:
-                org_data = {"action": "auto_organize", "folder_name": "Organized"}
+                org_data = {
+                    "created_folders": ["Work", "Personal"],
+                    "existing_folders": ["Inbox"],
+                    "criteria": "organize emails by type",
+                    "email_count": 25,
+                    "missing_fields": [],
+                    "confirmation_message": "I'll help you organize your emails by creating Work and Personal folders and using your Inbox."
+                }
             
-            if org_data["action"] == "create_folder":
-                folder_name = org_data.get("folder_name", "New Folder")
-                folder_id = await self.create_folder(folder_name)
+            # Ensure we have the required fields
+            created_folders = org_data.get("created_folders", [])
+            existing_folders = org_data.get("existing_folders", ["Inbox"])
+            criteria = org_data.get("criteria", "organize emails")
+            email_count = org_data.get("email_count", 25)
+            missing_fields = org_data.get("missing_fields", [])
+            confirmation_message = org_data.get("confirmation_message", "")
+            
+            # Only show accept/deny if all required fields are present
+            show_accept_deny = len(missing_fields) == 0
+            
+            # If no confirmation message was provided, create one
+            if not confirmation_message:
+                confirmation_message = f"📁 **Email Organization Plan**\n\n"
+                confirmation_message += f"**Criteria:** {criteria}\n"
+                confirmation_message += f"**Estimated emails to organize:** {email_count}\n\n"
                 
-                return f"✅ Created new folder: **{folder_name}**", {
-                    "type": "folder_created",
-                    "folder_name": folder_name,
-                    "folder_id": folder_id
-                }, False
-            
-            elif org_data["action"] == "auto_organize":
-                # Auto-organize emails based on content
-                organized = await self.auto_organize_emails()
+                if created_folders:
+                    confirmation_message += f"**📂 New folders to create:**\n"
+                    for folder in created_folders:
+                        confirmation_message += f"• {folder}\n"
+                    confirmation_message += "\n"
                 
-                return f"✅ Organized {organized['count']} emails into {organized['folders']} folders", {
-                    "type": "emails_organized",
-                    "organized_count": organized['count'],
-                    "folders_used": organized['folders']
-                }, False
+                confirmation_message += f"**📁 Existing folders to use:**\n"
+                for folder in existing_folders:
+                    confirmation_message += f"• {folder}\n"
+                
+                confirmation_message += f"\nWould you like me to proceed with this organization plan?"
             
-            else:
-                return "I can help you organize emails. Try saying 'Create a Work folder' or 'Organize my emails automatically'", None, False
+            # Return confirmation data
+            confirmation_data = {
+                "type": "email_organize",
+                "created_folders": created_folders,
+                "existing_folders": existing_folders,
+                "criteria": criteria,
+                "email_count": email_count,
+                "action": "organize_emails"
+            }
+            
+            return confirmation_message, confirmation_data, show_accept_deny
                 
         except Exception as e:
             return f"Sorry, I couldn't organize your emails: {str(e)}", None, False
@@ -724,7 +783,9 @@ class EmailIntentHandler:
             return []
 
 # Factory function to create email handler
-def create_email_handler(provider: str = "gmail") -> EmailIntentHandler:
-    """Create an email handler for the specified provider"""
+def create_email_handler(provider: str = "gmail", access_token: str = None, refresh_token: str = None, client_id: str = None, client_secret: str = None) -> EmailIntentHandler:
+    """Create an email handler for the specified provider, optionally using OAuth tokens for Gmail"""
     email_service = EmailService(provider)
+    if provider == "gmail" and all([access_token, refresh_token, client_id, client_secret]):
+        email_service.setup_gmail_with_token(access_token, refresh_token, client_id, client_secret)
     return EmailIntentHandler(email_service) 

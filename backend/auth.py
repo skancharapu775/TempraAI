@@ -53,9 +53,19 @@ def google_oauth_callback(request: Request, code: str):
             }
         },
         scopes=["openid", "https://www.googleapis.com/auth/userinfo.email",
-                "https://www.googleapis.com/auth/calendar"]
+                "https://www.googleapis.com/auth/calendar",
+                "https://www.googleapis.com/auth/gmail.modify"],
+        redirect_uri="http://localhost:8000/auth/callback"
     )
     flow.redirect_uri = "http://localhost:8000/auth/callback"
+    # Add prompt=consent to force the consent screen
+    flow.authorization_url = lambda **kwargs: flow.client_config["web"]["auth_uri"] + "?" + "&".join([
+        f"client_id={CLIENT_ID}",
+        f"redirect_uri=http://localhost:8000/auth/callback",
+        f"response_type=code",
+        f"scope={' '.join(flow.scopes)}",
+        f"prompt=consent"
+    ])
     flow.fetch_token(code=code)
     creds = flow.credentials
     idinfo = id_token.verify_oauth2_token(creds.id_token, google_requests.Request(), CLIENT_ID)
