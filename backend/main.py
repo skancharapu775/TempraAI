@@ -6,10 +6,9 @@ from dotenv import load_dotenv
 from typing import Optional, List
 from auth import router as auth_router
 from format import *
+from emails import create_email_handler
 import json
 import os
-# from emails import create_gmail_draft, gmail_authenticate
-# from email.mime.text import MIMEText
 import base64
 
 
@@ -97,26 +96,26 @@ async def classify_intent_for_message(client, message: str, conversation_history
 async def check_intent_continuation(client, current_intent: str, message: str, conversation_history: List[dict] = None) -> bool:
     """Check if user wants to continue current intent or switch topics"""
     system_prompt = f"""
-You are managing a smart assistant's conversation. The current active task/intent is: {current_intent}.
+        You are managing a smart assistant's conversation. The current active task/intent is: {current_intent}.
 
-Your job is to determine if the user's message continues working on this current task or if they want to switch to a different topic.
+        Your job is to determine if the user's message continues working on this current task or if they want to switch to a different topic.
 
-Available intents:
-- "Schedule": Scheduling meetings, appointments, or events
-- "Remind": Setting reminders or creating todos
-- "Email": Sending, drafting, or composing emails
-- "General": General conversation, questions, or other topics
+        Available intents:
+        - "Schedule": Scheduling meetings, appointments, or events
+        - "Remind": Setting reminders or creating todos
+        - "Email": Sending, drafting, or composing emails
+        - "General": General conversation, questions, or other topics
 
-IMPORTANT: If the user mentions scheduling, reminders, or emails while in General intent, they are switching topics and you should respond "EXIT".
+        IMPORTANT: If the user mentions scheduling, reminders, or emails while in General intent, they are switching topics and you should respond "EXIT".
 
-If the user's message:
-- Continues providing information for the current task → respond "CONTINUE"
-- Asks to do something different or changes topic → respond "EXIT"
-- Mentions scheduling, reminders, or emails while in General → respond "EXIT"
-- Is unclear or could go either way → respond "EXIT" (default to switching)
+        If the user's message:
+        - Continues providing information for the current task → respond "CONTINUE"
+        - Asks to do something different or changes topic → respond "EXIT"
+        - Mentions scheduling, reminders, or emails while in General → respond "EXIT"
+        - Is unclear or could go either way → respond "EXIT" (default to switching)
 
-Respond with ONLY "CONTINUE" or "EXIT".
-"""
+        Respond with ONLY "CONTINUE" or "EXIT".
+        """
 
     messages = [{"role": "system", "content": system_prompt}]
     
@@ -145,98 +144,46 @@ Respond with ONLY "CONTINUE" or "EXIT".
 
 async def handle_email_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
     """Handle email intent and return (reply, pending_changes, show_accept_deny)"""
-    system_prompt = """
-You are an assistant that extracts email details from the user's inputs. Your job is to guess subject, recipient, body content, and any attachments from natural text.
-Then, list any missing or unclear fields and generate a polite confirmation message asking the user to confirm or correct.
-
-REQUIRED FIELDS: subject, recipient, body
-OPTIONAL FIELDS: attachments
-
-Reply *only* with valid JSON. Example:
-{
-  "subject": "...",
-  "recipient": "...",   // email address or name
-  "body": "...",        // email body content
-  "attachments": [],    // optional list of attachments
-  "missing_fields": ["recipient", ...], // only include required fields that are missing
-  "confirmation_message": "..."
-}
-If there are any current known details, merge them with the JSON that you will return.
-"""
-
-    user_prompt = f"User message: {message}"
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt}
-    ]
-    if pending_changes:
-        messages.append({
-            "role": "assistant",
-            "content": f"Current known details (JSON): {json.dumps(pending_changes)}"
-        })
-
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=messages,
-        temperature=0.4
-    )
-
-    content = response.choices[0].message.content.strip()
+    # Create email handler (default to Gmail, can be made configurable)
+    email_handler = create_email_handler("gmail")
     
-    try:
-        data = json.loads(content)
-        data["type"] = "email"
-        print(f"Email proposal: {data}")
-        
-        # Only show accept/deny if all required fields are present
-        missing_fields = data.get("missing_fields", [])
-        show_accept_deny = len(missing_fields) == 0
-        
-        # Format current details for display
-        current_details = format_email_details(data)
-        confirmation_message = data["confirmation_message"]
-        
-        if current_details:
-            confirmation_message += f"\n\n---\n**📋 Current Details:**\n{current_details}\n---"
-        
-        return confirmation_message, data, show_accept_deny
-    except Exception as e:
-        return f"Sorry, I couldn't parse the email details. Could you please provide the email information again?", None, False
+    # Use the new email handler to process the message
+    return await email_handler.handle_email_intent(message, pending_changes)
 
 async def handle_remind_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
     """Handle reminder intent and return (reply, pending_changes, show_accept_deny)"""
     system_prompt = """
-You are an assistant that extracts reminder details from the user's inputs. Your job is to guess title, description, due_date, due_time, priority, category, and recurrence pattern from natural text.
+        You are an assistant that extracts reminder details from the user's inputs. Your job is to guess title, description, due_date, due_time, priority, category, and recurrence pattern from natural text.
 
-REQUIRED FIELDS: title, due_date, due_time, recurrence
-OPTIONAL FIELDS: description, priority, category
+        REQUIRED FIELDS: title, due_date, due_time, recurrence
+        OPTIONAL FIELDS: description, priority, category
 
-RECURRENCE PATTERNS:
-- "once": One-time reminder (default)
-- "daily": Every day
-- "weekly": Every week on the same day
-- "monthly": Every month on the same date
-- "yearly": Every year on the same date
-- "every_other_day": Every other day
-- "weekdays": Monday through Friday
-- "weekends": Saturday and Sunday
-- "custom": Custom pattern (specify in description)
+        RECURRENCE PATTERNS:
+        - "once": One-time reminder (default)
+        - "daily": Every day
+        - "weekly": Every week on the same day
+        - "monthly": Every month on the same date
+        - "yearly": Every year on the same date
+        - "every_other_day": Every other day
+        - "weekdays": Monday through Friday
+        - "weekends": Saturday and Sunday
+        - "custom": Custom pattern (specify in description)
 
-Reply *only* with valid JSON. Example:
-{
-  "title": "...",
-  "description": "...",   // optional
-  "due_date": "...",      // date in YYYY-MM-DD format
-  "due_time": "...",      // time in HH:MM format
-  "priority": "...",      // optional: "high", "medium", "low"
-  "category": "...",      // optional: "work", "personal", "health", etc.
-  "recurrence": "...",    // optional: "once", "daily", "weekly", "monthly", "yearly", "every_other_day", "weekdays", "weekends", "custom"
-  "missing_fields": ["title", ...], // only include required fields that are missing
-  "confirmation_message": "..."
-}
+        Reply *only* with valid JSON. Example:
+        {
+        "title": "...",
+        "description": "...",   // optional
+        "due_date": "...",      // date in YYYY-MM-DD format
+        "due_time": "...",      // time in HH:MM format
+        "priority": "...",      // optional: "high", "medium", "low"
+        "category": "...",      // optional: "work", "personal", "health", etc.
+        "recurrence": "...",    // optional: "once", "daily", "weekly", "monthly", "yearly", "every_other_day", "weekdays", "weekends", "custom"
+        "missing_fields": ["title", ...], // only include required fields that are missing
+        "confirmation_message": "..."
+        }
 
-If there are any current known details, merge them with the JSON that you will return.
-"""
+        If there are any current known details, merge them with the JSON that you will return.
+        """
 
     user_prompt = f"User message: {message}"
     messages = [
@@ -280,24 +227,24 @@ If there are any current known details, merge them with the JSON that you will r
 async def handle_schedule_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
     """Handle scheduling intent and return (reply, pending_changes, show_accept_deny)"""
     system_prompt = """
-You are an assistant that extracts scheduling details from the user's last inputs. Your job is to guess title, start_time, end_time, and attendees from natural text. 
-Then, list any missing or unclear fields and generate a polite confirmation message asking the user to confirm or correct.
-Use ISO 8601 format for times.
+        You are an assistant that extracts scheduling details from the user's last inputs. Your job is to guess title, start_time, end_time, and attendees from natural text. 
+        Then, list any missing or unclear fields and generate a polite confirmation message asking the user to confirm or correct.
+        Use ISO 8601 format for times.
 
-REQUIRED FIELDS: title, start_time
-OPTIONAL FIELDS: end_time, attendees
+        REQUIRED FIELDS: title, start_time
+        OPTIONAL FIELDS: end_time, attendees
 
-Reply *only* with valid JSON. Example:
-{
-  "title": "...",
-  "start_time": "...",   // ISO-8601
-  "end_time": "...",     // ISO-8601 or null (optional)
-  "attendees": ["email1", ...], // optional
-  "missing_fields": ["start_time", ...], // only include required fields that are missing
-  "confirmation_message": "..."
-}
-If there are any current known details, merge them with the JSON that you will return.
-"""
+        Reply *only* with valid JSON. Example:
+        {
+        "title": "...",
+        "start_time": "...",   // ISO-8601
+        "end_time": "...",     // ISO-8601 or null (optional)
+        "attendees": ["email1", ...], // optional
+        "missing_fields": ["start_time", ...], // only include required fields that are missing
+        "confirmation_message": "..."
+        }
+        If there are any current known details, merge them with the JSON that you will return.
+        """
 
     user_prompt = f"User message: {message}"
     messages = [
@@ -450,12 +397,14 @@ async def handle_change_action(request: ChangeActionRequest):
                 message=message,
                 intent="General"  # Switch back to general conversation
             )
-        elif request.change_details.get("type") == "email":
+        elif request.change_details.get("type") in ["email", "email_compose", "email_schedule"]:
             # Extract email details
             subject = request.change_details.get("subject", "Email")
             recipient = request.change_details.get("recipient", "recipient")
             body = request.change_details.get("body", "")
             attachments = request.change_details.get("attachments", [])
+            folder = request.change_details.get("folder", "")
+            scheduled_time = request.change_details.get("scheduled_time", "")
             
             # Generate confirmation message
             recipient_info = f" to {recipient}" if recipient else ""
@@ -463,7 +412,18 @@ async def handle_change_action(request: ChangeActionRequest):
             if attachments:
                 attachment_info = f" with {len(attachments)} attachment(s)"
             
-            message = f"Perfect! I've successfully created an email draft with subject '{subject}'{recipient_info}{attachment_info}. The email has been saved as a draft. Is there anything else I can help you with?"
+            folder_info = ""
+            if folder:
+                folder_info = f" in folder '{folder}'"
+            
+            schedule_info = ""
+            if scheduled_time:
+                schedule_info = f" (scheduled for {scheduled_time})"
+            
+            if request.change_details.get("type") == "email_schedule":
+                message = f"Perfect! I've scheduled an email with subject '{subject}'{recipient_info}{folder_info}{schedule_info}. Is there anything else I can help you with?"
+            else:
+                message = f"Perfect! I've successfully created an email draft with subject '{subject}'{recipient_info}{folder_info}{attachment_info}. The email has been saved as a draft. Is there anything else I can help you with?"
             
             return ChangeActionResponse(
                 success=True,

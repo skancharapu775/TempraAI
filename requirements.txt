@@ -5,3 +5,6 @@ google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
 pydantic
+msgraph-core
+azure-identity
+python-dotenv
