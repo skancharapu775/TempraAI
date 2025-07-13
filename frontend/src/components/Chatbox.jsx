@@ -12,6 +12,22 @@ const Chatbox = () => {
 
   const HISTORY_WINDOW = 12;
 
+  function getCookie(cname) {
+    let name = cname + "=";
+    let decodedCookie = decodeURIComponent(document.cookie);
+    let ca = decodedCookie.split(';');
+    for(let i = 0; i <ca.length; i++) {
+        let c = ca[i];
+        while (c.charAt(0) == ' ') {
+        c = c.substring(1);
+        }
+        if (c.indexOf(name) == 0) {
+        return c.substring(name.length, c.length);
+        }
+    }
+    return "";
+    }
+
   // Centralized message handler
   const handleSendMessage = async () => {
     if (!input.trim()) return;
@@ -65,6 +81,9 @@ const Chatbox = () => {
     const requestBody = {
       action: "accept",
       session_id: "your-session-id",
+      access_token: getCookie('access_token'),
+      //TODO Unsafe, need to change refresh token
+      refresh_token: getCookie('refresh_token'),
       change_details: pendingChanges, // Send the change details that were accepted
       conversation_history: messages.slice(-HISTORY_WINDOW)
     };
@@ -107,6 +126,7 @@ const Chatbox = () => {
     const requestBody = {
       action: "deny",
       session_id: "your-session-id",
+      access_token: localStorage.getItem('token'),
       change_details: pendingChanges, // Send the change details that were denied
       conversation_history: messages.slice(-HISTORY_WINDOW)
     };

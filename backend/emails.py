@@ -9,7 +9,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
-from msgraph.core import GraphClient
+# from msgraph.core import GraphClient
 from azure.identity import ClientSecretCredential
 from openai import OpenAI
 
@@ -63,7 +63,7 @@ class EmailService:
             client_secret=client_secret
         )
         
-        self.client = GraphClient(credential=credential)
+        # self.client = GraphClient(credential=credential)
 
 class EmailIntentHandler:
     def __init__(self, email_service: EmailService):
@@ -138,7 +138,7 @@ class EmailIntentHandler:
             summary_prompt = f"""
             Summarize the following recent emails in a concise, helpful way:
             
-            {'\n'.join(email_texts)}
+            {' '.join(email_texts)}
             
             Provide a summary that includes:
             1. Key themes or topics

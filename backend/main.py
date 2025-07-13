@@ -9,7 +9,10 @@ from format import *
 from emails import create_email_handler
 import json
 import os
+from calendar_utils import create_google_event
 import base64
+from datetime import datetime, date
+import tzlocal
 
 
 app = FastAPI(title="TempraAI API", version="1.0.0")
@@ -39,6 +42,8 @@ class ProcessMessageResponse(BaseModel):
 class ChangeActionRequest(BaseModel):
     action: str  # "accept" or "deny"
     session_id: str
+    access_token: str
+    refresh_token: str
     change_details: dict  # The pending changes being acted upon
     conversation_history: Optional[List[dict]] = None
 
@@ -101,7 +106,7 @@ async def check_intent_continuation(client, current_intent: str, message: str, c
         Your job is to determine if the user's message continues working on this current task or if they want to switch to a different topic.
 
         Available intents:
-        - "Schedule": Scheduling meetings, appointments, or events
+        - "Schedule": Scheduling meetings, appointments, or events. For any scheduling related activities, remember to use ISO-8601
         - "Remind": Setting reminders or creating todos
         - "Email": Sending, drafting, or composing emails
         - "General": General conversation, questions, or other topics
@@ -226,23 +231,23 @@ async def handle_remind_intent(client, message: str, pending_changes: dict = Non
 
 async def handle_schedule_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
     """Handle scheduling intent and return (reply, pending_changes, show_accept_deny)"""
-    system_prompt = """
+    system_prompt = f"""
+        Today is {datetime.now()}.
         You are an assistant that extracts scheduling details from the user's last inputs. Your job is to guess title, start_time, end_time, and attendees from natural text. 
         Then, list any missing or unclear fields and generate a polite confirmation message asking the user to confirm or correct.
-        Use ISO 8601 format for times.
+        Strictly use ISO 8601 format for times. This means, each time NEEDS A DATE. If the date is unclear, prompt the user. 
+        If no specific date is given, then default to today's date. 
 
         REQUIRED FIELDS: title, start_time
         OPTIONAL FIELDS: end_time, attendees
 
         Reply *only* with valid JSON. Example:
-        {
         "title": "...",
-        "start_time": "...",   // ISO-8601
-        "end_time": "...",     // ISO-8601 or null (optional)
+        "start_time": "...",   // ISO-8601, if not ISO-8601, convert first. It must be this format.
+        "end_time": "...",     // ISO-8601, if not ISO-8601, convert first. It must be this format. or null (optional)
         "attendees": ["email1", ...], // optional
         "missing_fields": ["start_time", ...], // only include required fields that are missing
         "confirmation_message": "..."
-        }
         If there are any current known details, merge them with the JSON that you will return.
         """
 
@@ -390,7 +395,10 @@ async def handle_change_action(request: ChangeActionRequest):
             if attendees:
                 attendee_info = f" with {', '.join(attendees)}"
             
-            message = f"Perfect! I've successfully scheduled '{title}' {time_info}{attendee_info}. Is there anything else I can help you with?"
+            res = create_google_event(request.access_token, request.refresh_token, start_time, end_time, title)
+            
+            message = f"Perfect! I've successfully scheduled '{title}' {time_info}{attendee_info} Here's the link {res}. Is there anything else I can help you with?"
+            
             
             return ChangeActionResponse(
                 success=True,

@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
+from google_auth_oauthlib.flow import Flow
 from pydantic import BaseModel
 from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
@@ -7,7 +9,7 @@ from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests 
 router = APIRouter()
 
-SECRET = "BaM6BJS3wgaijrWCBABGgLow2Z_klM9u1aaubxmPK9I"
+SECRET = "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"
 CLIENT_ID = "1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com"
 ALGORITHM = "HS256"
 
@@ -37,10 +39,44 @@ def login_with_google(data: GoogleToken):
     # # Return user's JWT
     return create_token(email)
 
+
+@router.get("/callback")
+def google_oauth_callback(request: Request, code: str):
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": CLIENT_ID,
+                "client_secret": SECRET,
+                "redirect_uris": ["http://localhost:8000/auth/callback"],
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=["openid", "https://www.googleapis.com/auth/userinfo.email",
+                "https://www.googleapis.com/auth/calendar"]
+    )
+    flow.redirect_uri = "http://localhost:8000/auth/callback"
+    flow.fetch_token(code=code)
+    creds = flow.credentials
+    idinfo = id_token.verify_oauth2_token(creds.id_token, google_requests.Request(), CLIENT_ID)
+    if not creds.id_token:
+        raise HTTPException(status_code=400, detail="Missing ID token. Add prompt=consent to your OAuth URL.")
+    email = idinfo['email']
+    session_token = jwt.encode({
+        "sub": email,
+        "exp": datetime.now(timezone.utc) + timedelta(hours=2)
+    }, SECRET, algorithm="HS256")
+    
+    redirect = RedirectResponse("http://localhost:5173/")
+    redirect.set_cookie(key="access_token", value=creds.token, httponly=False)
+    redirect.set_cookie(key="refresh_token", value=creds.refresh_token, httponly=False)
+    redirect.set_cookie(key="session_token", value=session_token, httponly=False)
+    return redirect
+
 def create_token(email: str):
     payload = {
         "sub": email,
-        "exp": datetime.now(timezone.utc) + timedelta(hours=1)
+        "exp": datetime.now(timezone.utc) + timedelta(hours=2)
     }
     token = jwt.encode(payload, SECRET, algorithm=ALGORITHM)
     return {"access_token": token}

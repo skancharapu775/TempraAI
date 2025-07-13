@@ -5,6 +5,22 @@ import { useState, useEffect } from "react";
 function Navbar() {
     const [isLoggedIn, setIsLoggedIn] = useState(false);
 
+    useEffect(() => {
+      const token = localStorage.getItem("token");
+      setIsLoggedIn(!!token);
+        const interval = setInterval(() => {
+            const token = localStorage.getItem("token");
+            setIsLoggedIn(!!token);  // Updates if token appears/disappears
+          }, 1000); // check every 1 second
+        
+          return () => clearInterval(interval); 
+    }, [])
+
+    const handleLogout = () => {
+      localStorage.removeItem("token");
+      window.location.href = "/login";
+    };
+
 
     return (
         <header
@@ -36,18 +52,17 @@ function Navbar() {
                     <div className="flex items-center gap-2">
                         <Link
                         to="/seller-dashboard"
-                        className="btn btn-md btn-outline normal-case text-white border-white hover:bg-white hover:text-slate-900"
+                        className=" normal-case text-white border-white"
                         >
                             <CircleUser className="w-6 h-6 text-blue-700" />
-                            Your Dashboard
                         </Link>
-                        <button
+                        {/* <button
                             onClick={handleLogout}
                             className="btn btn-sm btn-outline normal-case text-white border-white hover:bg-white hover:text-slate-900"
                         >
                             <LogOut className="w-4 h-4" />
                             Logout
-                        </button>
+                        </button> */}
                     </div>
                 )}
               </div>
