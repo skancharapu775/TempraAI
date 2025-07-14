@@ -7,7 +7,7 @@ const LoginPage = () => {
     const handleLogin = () => {
         const redirectUri = encodeURIComponent("http://localhost:8000/auth/callback");
         const clientId = "1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com";
-        const scope = encodeURIComponent("https://www.googleapis.com/auth/calendar openid email");
+        const scope = encodeURIComponent("openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/gmail.modify");
 
         
         const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&include_granted_scopes=false&state=tempra`;

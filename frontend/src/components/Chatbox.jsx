@@ -44,6 +44,8 @@ const Chatbox = () => {
       conversation_history: windowedHistory,
       current_intent: currentIntent,
       pending_changes: pendingChanges,
+      access_token: getCookie('access_token'),
+      refresh_token: getCookie('refresh_token'),
     };
 
     console.log("Frontend sending request:", requestBody);

@@ -31,6 +31,8 @@ class ProcessMessageRequest(BaseModel):
     conversation_history: Optional[List[dict]] = None
     current_intent: Optional[str] = None
     pending_changes: Optional[dict] = None
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
 
 class ProcessMessageResponse(BaseModel):
     reply: str
@@ -111,12 +113,12 @@ async def check_intent_continuation(client, current_intent: str, message: str, c
         - "Email": Sending, drafting, or composing emails
         - "General": General conversation, questions, or other topics
 
-        IMPORTANT: If the user mentions scheduling, reminders, or emails while in General intent, they are switching topics and you should respond "EXIT".
+        IMPORTANT: If the user mentions SCHEDULING, REMINDERS, or EMAILS while in general intent, they are switching topics and you should respond "EXIT".
 
         If the user's message:
         - Continues providing information for the current task → respond "CONTINUE"
         - Asks to do something different or changes topic → respond "EXIT"
-        - Mentions scheduling, reminders, or emails while in General → respond "EXIT"
+        - Important: Mentions scheduling, reminders, or emails while in General → respond "EXIT"
         - Is unclear or could go either way → respond "EXIT" (default to switching)
 
         Respond with ONLY "CONTINUE" or "EXIT".
@@ -147,10 +149,16 @@ async def check_intent_continuation(client, current_intent: str, message: str, c
     print(f"DEBUG: Intent continuation decision: {decision}")
     return decision == "CONTINUE"
 
-async def handle_email_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
+async def handle_email_intent(client, message: str, pending_changes: dict = None, access_token: str = None, refresh_token: str = None) -> tuple[str, dict, bool]:
     """Handle email intent and return (reply, pending_changes, show_accept_deny)"""
     # Create email handler (default to Gmail, can be made configurable)
-    email_handler = create_email_handler("gmail")
+    email_handler = create_email_handler(
+        provider="gmail",
+        access_token=access_token,
+        refresh_token=refresh_token,
+        client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
+        client_secret="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"
+    )
     
     # Use the new email handler to process the message
     return await email_handler.handle_email_intent(message, pending_changes)
@@ -350,7 +358,9 @@ async def process_message(request: ProcessMessageRequest = Body(...)):
         )
     elif intent == "Email":
         reply, pending_changes, show_accept_deny = await handle_email_intent(
-            client, request.message, request.pending_changes
+            client, request.message, request.pending_changes,
+            access_token=request.access_token,
+            refresh_token=request.refresh_token
         )
     elif intent == "Remind":
         reply, pending_changes, show_accept_deny = await handle_remind_intent(

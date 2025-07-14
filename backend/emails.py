@@ -24,29 +24,11 @@ class EmailService:
         self.provider = provider
         self.client = None
         self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        
-        if provider == "gmail":
-            self.setup_gmail()
-        elif provider == "outlook":
+        # Do not call setup_gmail() here
+        if provider == "outlook":
             self.setup_outlook()
     
-    def setup_gmail(self):
-        """Setup Gmail API client"""
-        creds = None
-        if os.path.exists('gmail_token.json'):
-            creds = Credentials.from_authorized_user_file('gmail_token.json', GMAIL_SCOPES)
-        
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file('gmail_credentials.json', GMAIL_SCOPES)
-                creds = flow.run_local_server(port=0)
-            
-            with open('gmail_token.json', 'w') as token:
-                token.write(creds.to_json())
-        
-        self.client = build('gmail', 'v1', credentials=creds)
+    # Remove setup_gmail()
     
     def setup_outlook(self):
         """Setup Microsoft Graph API client"""
@@ -62,7 +44,6 @@ class EmailService:
             client_id=client_id,
             client_secret=client_secret
         )
-        
         # self.client = GraphClient(credential=credential)
 
     def setup_gmail_with_token(self, access_token: str, refresh_token: str, client_id: str, client_secret: str):
@@ -784,8 +765,10 @@ class EmailIntentHandler:
 
 # Factory function to create email handler
 def create_email_handler(provider: str = "gmail", access_token: str = None, refresh_token: str = None, client_id: str = None, client_secret: str = None) -> EmailIntentHandler:
-    """Create an email handler for the specified provider, optionally using OAuth tokens for Gmail"""
+    """Create an email handler for the specified provider, using OAuth tokens for Gmail"""
     email_service = EmailService(provider)
-    if provider == "gmail" and all([access_token, refresh_token, client_id, client_secret]):
+    if provider == "gmail":
+        if not all([access_token, refresh_token, client_id, client_secret]):
+            raise ValueError("Gmail requires access_token, refresh_token, client_id, and client_secret")
         email_service.setup_gmail_with_token(access_token, refresh_token, client_id, client_secret)
     return EmailIntentHandler(email_service) 
