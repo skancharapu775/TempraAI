@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Cookie
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
 from google_auth_oauthlib.flow import Flow
+from google.oauth2.credentials import Credentials
 from pydantic import BaseModel
 from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests 
+from firebase import db
 router = APIRouter()
 
 SECRET = "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"
@@ -15,6 +17,31 @@ ALGORITHM = "HS256"
 
 class GoogleToken(BaseModel):
     token: str
+
+# Helpers
+def get_google_creds(email: str):
+    doc = db.collection("users").document(email).get()
+    data = doc.to_dict()
+    creds = Credentials(
+        token=data["access_token"],
+        refresh_token=data["refresh_token"],
+        client_id=CLIENT_ID,
+        client_secret=SECRET,
+        token_uri="https://oauth2.googleapis.com/token",
+    )
+    if creds.expired:
+        creds.refresh(Request())
+        # update Firestore
+        db.collection("users").document(email).update({
+            "access_token": creds.token,
+            "refresh_token": creds.refresh_token,
+            "expires_at": creds.expiry.isoformat()
+        })
+    return creds
+
+# Routes
+
+
 
 @router.post("/google")
 # db: Session = Depends(get_db)
@@ -38,6 +65,14 @@ def login_with_google(data: GoogleToken):
     #         raise HTTPException(status_code=500, detail="Server error")
     # # Return user's JWT
     return create_token(email)
+
+@router.get("/me")
+def get_user(session_token: str = Cookie(...)):
+    try:
+        payload = jwt.decode(session_token, SECRET, algorithms=[ALGORITHM])
+        return {"email": payload["sub"]}
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid session")
 
 
 @router.get("/callback")
@@ -78,9 +113,19 @@ def google_oauth_callback(request: Request, code: str):
     }, SECRET, algorithm="HS256")
     
     redirect = RedirectResponse("http://localhost:5173/")
-    redirect.set_cookie(key="access_token", value=creds.token, httponly=False)
-    redirect.set_cookie(key="refresh_token", value=creds.refresh_token, httponly=False)
-    redirect.set_cookie(key="session_token", value=session_token, httponly=False)
+    redirect.set_cookie(
+    key="session_token",
+    value=session_token,
+    httponly=True,
+    secure=False,  # True in production
+    samesite="Lax"
+    )
+
+    db.collection("users").document(email).set({
+        "access_token": creds.token,
+        "refresh_token": creds.refresh_token,
+        "expires_at": creds.expiry.isoformat(),
+    })
     return redirect
 
 def create_token(email: str):

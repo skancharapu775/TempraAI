@@ -4,6 +4,8 @@ import {useNavigate} from 'react-router-dom';
 
 const LoginPage = () => {
     const navigate = useNavigate();
+  
+    // Check login status
     const handleLogin = () => {
         const redirectUri = encodeURIComponent("http://localhost:8000/auth/callback");
         const clientId = "1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com";
