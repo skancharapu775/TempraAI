@@ -26,4 +26,4 @@ dist-ssr
 *.sw?
 
 # Hidden
-firebase_config.json
+# firebase_config.json
