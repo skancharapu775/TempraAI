@@ -32,8 +32,6 @@ class ProcessMessageRequest(BaseModel):
     conversation_history: Optional[List[dict]] = None
     current_intent: Optional[str] = None
     pending_changes: Optional[dict] = None
-    access_token: Optional[str] = None
-    refresh_token: Optional[str] = None
 
 class ProcessMessageResponse(BaseModel):
     reply: str

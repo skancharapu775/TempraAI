@@ -6,28 +6,14 @@ import Cookies from 'js-cookie';
 const Chatbox = () => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
+  const [loading, setLoading] = useState("");
+  const [loadingDots, setLoadingDots] = useState(".");
   const [pendingChanges, setPendingChanges] = useState(null);
   const [currentIntent, setCurrentIntent] = useState(null);
   const [showAcceptDeny, setShowAcceptDeny] = useState(false);
   const messagesEndRef = useRef(null);
 
   const HISTORY_WINDOW = 12;
-
-  function getCookie(cname) {
-    let name = cname + "=";
-    let decodedCookie = decodeURIComponent(document.cookie);
-    let ca = decodedCookie.split(';');
-    for(let i = 0; i <ca.length; i++) {
-        let c = ca[i];
-        while (c.charAt(0) == ' ') {
-        c = c.substring(1);
-        }
-        if (c.indexOf(name) == 0) {
-        return c.substring(name.length, c.length);
-        }
-    }
-    return "";
-    }
 
   // Centralized message handler
   const handleSendMessage = async () => {
@@ -45,12 +31,10 @@ const Chatbox = () => {
       conversation_history: windowedHistory,
       current_intent: currentIntent,
       pending_changes: pendingChanges,
-      access_token: getCookie('access_token'),
-      refresh_token: getCookie('refresh_token'),
     };
 
     console.log("Frontend sending request:", requestBody);
-
+    setLoading(true);
     // Call the backend unified endpoint
     const res = await fetch("http://localhost:8000/process-message", {
       method: "POST",
@@ -58,8 +42,7 @@ const Chatbox = () => {
       body: JSON.stringify(requestBody),
     });
     const data = await res.json();
-
-    console.log("Frontend received response:", data);
+    setLoading(false);
 
     // Add assistant reply
     setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
@@ -166,6 +149,19 @@ const Chatbox = () => {
       handleSendMessage();
     }
   };
+  useEffect(() => {
+    if (!loading) return;
+  
+    const interval = setInterval(() => {
+      setLoadingDots(prev => {
+        if (prev === ".") return "..";
+        if (prev === "..") return "...";
+        return ".";
+      });
+    }, 800);
+  
+    return () => clearInterval(interval);
+  }, [loading]);
 
   return (
     <div className="flex flex-col h-full max-w-3xl mx-auto bg-black">
@@ -191,6 +187,15 @@ const Chatbox = () => {
             </div>
           </div>
         ))}
+        {loading && (
+          <div className="chat chat-start">
+            <div className="chat-bubble rounded-md p-4 bg-gray-800 text-white">
+              <div className="prose prose-invert max-w-none">
+                <p>Just a sec {loadingDots}</p>
+              </div>
+            </div>
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
 
