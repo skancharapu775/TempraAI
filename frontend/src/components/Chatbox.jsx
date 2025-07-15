@@ -31,6 +31,7 @@ const Chatbox = () => {
       conversation_history: windowedHistory,
       current_intent: currentIntent,
       pending_changes: pendingChanges,
+      email: Cookies.get('email'), // Add email to the request body
     };
 
     console.log("Frontend sending request:", requestBody);

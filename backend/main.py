@@ -9,12 +9,11 @@ from format import *
 from emails import create_email_handler
 import json
 import os
-from calendar_utils import create_google_event
 from auth import get_google_creds
 import base64
 from datetime import datetime, date
 import tzlocal
-
+from scheduling import create_schedule_handler
 
 app = FastAPI(title="TempraAI API", version="1.0.0")
 app.add_middleware(
@@ -236,70 +235,15 @@ async def handle_remind_intent(client, message: str, pending_changes: dict = Non
     except Exception as e:
         return f"Sorry, I couldn't parse the reminder details. Could you please provide the reminder information again?", None, False
 
-async def handle_schedule_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
-    """Handle scheduling intent and return (reply, pending_changes, show_accept_deny)"""
-    system_prompt = f"""
-        Today is {datetime.now()}.
-        You are an assistant that extracts scheduling details from the user's last inputs. Your job is to guess title, start_time, end_time, and attendees from natural text. 
-        Then, list any missing or unclear fields and generate a polite confirmation message asking the user to confirm or correct.
-        Strictly use ISO 8601 format for times. This means, each time NEEDS A DATE. If the date is unclear, prompt the user. 
-        If no specific date is given, then default to today's date. If no end_time is given, assume the event will last one hour.
-
-        REQUIRED FIELDS: title, start_time
-        OPTIONAL FIELDS: end_time, attendees
-
-        Reply *only* with valid JSON. Example:
-
-        "title": "...",
-        "start_time": "...",   // ISO-8601, if not ISO-8601, convert first. It must be this format.
-        "end_time": "...",     // ISO-8601, if not ISO-8601, convert first. It must be this format. or null (optional)
-        "attendees": ["email1", ...], // optional
-        "missing_fields": ["start_time", ...], // only include required fields that are missing
-        "confirmation_message": "..."
-
-        If there are any current known details, merge them with the JSON that you will return.
-        MAKE SURE THE START/END TIMES ARE IN A FORMAT like this "2025-07-14T22:00:00"
-        If
-        """
-
-    user_prompt = f"User message: {message}"
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt}
-    ]
-    if pending_changes:
-        messages.append({
-            "role": "assistant",
-            "content": f"Current known details (JSON): {json.dumps(pending_changes)}"
-        })
-
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=messages,
-        temperature=0.4
+async def handle_schedule_intent(client, message: str, pending_changes: dict = None, access_token: str = None, refresh_token: str = None) -> tuple[str, dict, bool]:
+    """Delegate scheduling intent to scheduling.py handler, just like handle_email_intent."""
+    schedule_handler = create_schedule_handler(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
+        client_secret="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"
     )
-
-    content = response.choices[0].message.content.strip()
-    
-    try:
-        data = json.loads(content)
-        data["type"] = "schedule"
-        print(f"Schedule proposal: {data}")
-        
-        # Only show accept/deny if all required fields are present
-        missing_fields = data.get("missing_fields", [])
-        show_accept_deny = len(missing_fields) == 0
-        
-        # Format current details for display
-        current_details = format_schedule_details(data)
-        confirmation_message = data["confirmation_message"]
-        
-        if current_details:
-            confirmation_message += f"\n\n---\n**📋 Current Details:**\n{current_details}\n---"
-        
-        return confirmation_message, data, show_accept_deny
-    except Exception as e:
-        return f"Sorry, I couldn't parse the scheduling details. Could you please provide the meeting information again?", None, False
+    return await schedule_handler.handle_schedule_intent(message, pending_changes)
 
 async def handle_general_chat(client, message: str, conversation_history: List[dict] = None) -> str:
     """Handle general chat and return reply"""
@@ -352,8 +296,9 @@ async def process_message(request: ProcessMessageRequest = Body(...)):
 
     # 2. Route to appropriate handler
     if intent == "Schedule":
+        creds = get_google_creds(request.email)
         reply, pending_changes, show_accept_deny = await handle_schedule_intent(
-            client, request.message, request.pending_changes
+            client, request.message, request.pending_changes, creds.token, creds.refresh_token
         )
     elif intent == "Email":
         creds = get_google_creds(request.email)
@@ -398,116 +343,141 @@ async def handle_change_action(request: ChangeActionRequest):
     
     if request.action.lower() == "accept":
         # Handle acceptance
-        if request.change_details.get("type") == "schedule":
-            # Extract schedule details
-            title = request.change_details.get("title", "Meeting")
-            start_time = request.change_details.get("start_time")
-            end_time = request.change_details.get("end_time")
-            attendees = request.change_details.get("attendees", [])
-            
-            # Generate confirmation message
-            if start_time and end_time:
-                time_info = f"from {start_time} to {end_time}"
-            elif start_time:
-                time_info = f"at {start_time}"
-            else:
-                time_info = "at the specified time"
-            
-            attendee_info = ""
-            if attendees:
-                attendee_info = f" with {', '.join(attendees)}"
-            
-            res = create_google_event(credentials.token, credentials.refresh_token, start_time, end_time, title)
-            
-            message = f"Perfect! I've successfully scheduled '{title}' {time_info}{attendee_info} Here's the link {res}. Is there anything else I can help you with?"
-            
-            
-            return ChangeActionResponse(
-                success=True,
-                message=message,
-                intent="General"  # Switch back to general conversation
-            )
-        elif request.change_details.get("type") in ["email", "email_compose", "email_schedule"]:
-            # Extract email details
-            subject = request.change_details.get("subject", "Email")
-            recipient = request.change_details.get("recipient", "recipient")
-            body = request.change_details.get("body", "")
-            attachments = request.change_details.get("attachments", [])
-            folder = request.change_details.get("folder", "")
-            scheduled_time = request.change_details.get("scheduled_time", "")
-
-            # Actually send or save the email using Gmail API
-            email_handler = create_email_handler(
-                provider="gmail",
+        if request.change_details.get("type") in ["schedule_add", "schedule_edit", "schedule_delete"]:
+            schedule_type = request.change_details.get("type")
+            schedule_handler = create_schedule_handler(
                 access_token=credentials.token,
                 refresh_token=credentials.refresh_token,
                 client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
                 client_secret="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"
             )
-
-            recipient_info = f" to {recipient}" if recipient else ""
-            attachment_info = ""
-            if attachments:
-                attachment_info = f" with {len(attachments)} attachment(s)"
-
-            folder_info = ""
-            if folder:
-                folder_info = f" in folder '{folder}'"
-
-            schedule_info = ""
-            if scheduled_time:
-                schedule_info = f" (scheduled for {scheduled_time})"
-
-            if request.change_details.get("type") == "email_schedule":
-                message = f"Perfect! I've scheduled an email with subject '{subject}'{recipient_info}{folder_info}{schedule_info}. Is there anything else I can help you with?"
-            else:
+            if schedule_type == "schedule_add":
+                # Actually add the event to Google Calendar
+                data = request.change_details
+                event = {
+                    'summary': data.get('title'),
+                    'start': {
+                        'dateTime': data.get('start_time'),
+                        'timeZone': 'America/New_York',
+                    },
+                    'end': {
+                        'dateTime': data.get('end_time'),
+                        'timeZone': 'America/New_York',
+                    },
+                }
+                if data.get('attendees'):
+                    event['attendees'] = [{'email': email} for email in data['attendees']]
+                created_event = schedule_handler.schedule_service.client.events().insert(calendarId='primary', body=event).execute()
+                message = f"Perfect! I've successfully scheduled '{data.get('title')}' from {data.get('start_time')} to {data.get('end_time')}. Here's the link {created_event.get('htmlLink')}. Is there anything else I can help you with?"
+                return ChangeActionResponse(
+                    success=True,
+                    message=message,
+                    intent="General"
+                )
+            elif schedule_type == "schedule_edit":
+                # Actually edit the event in Google Calendar
+                data = request.change_details
+                event_id = data.get('event_id')
+                updates = data.get('updates', {})
+                event = schedule_handler.schedule_service.client.events().get(calendarId='primary', eventId=event_id).execute()
+                event.update(updates)
+                updated_event = schedule_handler.schedule_service.client.events().update(calendarId='primary', eventId=event_id, body=event).execute()
+                message = f"Perfect! I've updated your event '{updated_event.get('summary')}'. Is there anything else I can help you with?"
+                return ChangeActionResponse(
+                    success=True,
+                    message=message,
+                    intent="General"
+                )
+            elif schedule_type == "schedule_delete":
+                # Actually delete the event in Google Calendar
+                data = request.change_details
+                event_id = data.get('event_id')
+                event = schedule_handler.schedule_service.client.events().get(calendarId='primary', eventId=event_id).execute()
+                schedule_handler.schedule_service.client.events().delete(calendarId='primary', eventId=event_id).execute()
+                message = f"Perfect! I've deleted your event '{event.get('summary')}'. Is there anything else I can help you with?"
+                return ChangeActionResponse(
+                    success=True,
+                    message=message,
+                    intent="General"
+                )
+        elif request.change_details.get("type") in ["email", "email_compose", "email_schedule", "email_organize"]:
+            email_type = request.change_details.get("type")
+            if email_type == "email_compose" or email_type == "email":
+                # Handle composing a new email (draft, send, etc.)
+                subject = request.change_details.get("subject", "Email")
+                recipient = request.change_details.get("recipient", "recipient")
+                body = request.change_details.get("body", "")
+                attachments = request.change_details.get("attachments", [])
+                folder = request.change_details.get("folder", "")
+                email_handler = create_email_handler(
+                    provider="gmail",
+                    access_token=credentials.token,
+                    refresh_token=credentials.refresh_token,
+                    client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
+                    client_secret="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"
+                )
+                recipient_info = f" to {recipient}" if recipient else ""
+                attachment_info = f" with {len(attachments)} attachment(s)" if attachments else ""
+                folder_info = f" in folder '{folder}'" if folder else ""
                 message = f"Perfect! I've successfully created an email draft with subject '{subject}'{recipient_info}{folder_info}{attachment_info}. The email has been saved as a draft. Is there anything else I can help you with?"
-
-            return ChangeActionResponse(
-                success=True,
-                message=message,
-                intent="General"  # Switch back to general conversation
-            )
-        elif request.change_details.get("type") == "email_organize":
-            # Extract organization details
-            created_folders = request.change_details.get("created_folders", [])
-            existing_folders = request.change_details.get("existing_folders", [])
-            criteria = request.change_details.get("criteria", "organize emails")
-            email_count = request.change_details.get("email_count", 25)
-
-            # Initialize Gmail client
-            email_handler = create_email_handler(
-                provider="gmail",
-                access_token=credentials.token,
-                refresh_token=credentials.refresh_token,
-                client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
-                client_secret="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"
-            )
-
-            # Create new folders if specified
-            created_folder_names = []
-            if created_folders:
-                for folder_name in created_folders:
-                    try:
-                        folder_id = await email_handler.email_service.create_folder(folder_name)
-                        created_folder_names.append(folder_name)
-                    except Exception as e:
-                        print(f"Error creating folder {folder_name}: {e}")
-
-            # Generate confirmation message
-            folder_info = ""
-            if created_folder_names:
-                folder_info = f"Created folders: {', '.join(created_folder_names)}. "
-            
-            folder_info += f"Using existing folders: {', '.join(existing_folders)}"
-
-            message = f"Perfect! I've successfully organized your emails based on '{criteria}'. {folder_info}. Approximately {email_count} emails were processed. Is there anything else I can help you with?"
-
-            return ChangeActionResponse(
-                success=True,
-                message=message,
-                intent="General"  # Switch back to general conversation
-            )
+                return ChangeActionResponse(
+                    success=True,
+                    message=message,
+                    intent="General"
+                )
+            elif email_type == "email_schedule":
+                # Handle scheduling an email to be sent later
+                subject = request.change_details.get("subject", "Email")
+                recipient = request.change_details.get("recipient", "recipient")
+                folder = request.change_details.get("folder", "")
+                scheduled_time = request.change_details.get("scheduled_time", "")
+                email_handler = create_email_handler(
+                    provider="gmail",
+                    access_token=credentials.token,
+                    refresh_token=credentials.refresh_token,
+                    client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
+                    client_secret="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"
+                )
+                recipient_info = f" to {recipient}" if recipient else ""
+                folder_info = f" in folder '{folder}'" if folder else ""
+                schedule_info = f" (scheduled for {scheduled_time})" if scheduled_time else ""
+                message = f"Perfect! I've scheduled an email with subject '{subject}'{recipient_info}{folder_info}{schedule_info}. Is there anything else I can help you with?"
+                return ChangeActionResponse(
+                    success=True,
+                    message=message,
+                    intent="General"
+                )
+            elif email_type == "email_organize":
+                # Handle organizing emails into folders/labels
+                created_folders = request.change_details.get("created_folders", [])
+                existing_folders = request.change_details.get("existing_folders", [])
+                criteria = request.change_details.get("criteria", "organize emails")
+                email_count = request.change_details.get("email_count", 25)
+                email_handler = create_email_handler(
+                    provider="gmail",
+                    access_token=credentials.token,
+                    refresh_token=credentials.refresh_token,
+                    client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
+                    client_secret="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"
+                )
+                created_folder_names = []
+                if created_folders:
+                    for folder_name in created_folders:
+                        try:
+                            folder_id = await email_handler.email_service.create_folder(folder_name)
+                            created_folder_names.append(folder_name)
+                        except Exception as e:
+                            print(f"Error creating folder {folder_name}: {e}")
+                folder_info = ""
+                if created_folder_names:
+                    folder_info = f"Created folders: {', '.join(created_folder_names)}. "
+                folder_info += f"Using existing folders: {', '.join(existing_folders)}"
+                message = f"Perfect! I've successfully organized your emails based on '{criteria}'. {folder_info}. Approximately {email_count} emails were processed. Is there anything else I can help you with?"
+                return ChangeActionResponse(
+                    success=True,
+                    message=message,
+                    intent="General"
+                )
         elif request.change_details.get("type") == "reminder":
             # Extract reminder details
             title = request.change_details.get("title", "Reminder")

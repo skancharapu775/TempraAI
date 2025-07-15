@@ -1,4 +1,4 @@
-def format_schedule_details(data: dict) -> str:
+def format_event_details(data: dict) -> str:
     """Format schedule details for display"""
     details = []
     

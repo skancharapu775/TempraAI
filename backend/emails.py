@@ -97,19 +97,19 @@ class EmailIntentHandler:
         # First, classify what email function is needed
         email_function = await self.classify_email_function(message)
         
-        if email_function == "summarize":
+        if email_function == "summarize": # no confirmation
             return await self.summarize_emails(message)
-        elif email_function == "priority":
+        elif email_function == "priority": # no confirmation
             return await self.get_priority_emails(message)
-        elif email_function == "organize":
-            return await self.organize_emails(message)
-        elif email_function == "search":
+        elif email_function == "search": # no confirmation
             return await self.search_emails(message)
-        elif email_function == "compose":
-            return await self.compose_email(message, pending_changes)
-        elif email_function == "draft":
+        elif email_function == "draft": # no confirmation
             return await self.manage_drafts(message)
-        elif email_function == "schedule":
+        elif email_function == "compose": # confirmation
+            return await self.compose_email(message, pending_changes)
+        elif email_function == "organize": # confirmation
+            return await self.organize_emails(message)
+        elif email_function == "schedule": # confirmation
             return await self.schedule_email(message, pending_changes)
         else:
             # Default to compose if unclear
