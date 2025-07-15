@@ -10,6 +10,7 @@ from emails import create_email_handler
 import json
 import os
 from calendar_utils import create_google_event
+from auth import get_google_creds
 import base64
 from datetime import datetime, date
 import tzlocal
@@ -43,9 +44,8 @@ class ProcessMessageResponse(BaseModel):
 # Request/Response Models for change actions
 class ChangeActionRequest(BaseModel):
     action: str  # "accept" or "deny"
-    session_id: str
-    access_token: str
-    refresh_token: str
+    session_token: str
+    email: str
     change_details: dict  # The pending changes being acted upon
     conversation_history: Optional[List[dict]] = None
 
@@ -387,6 +387,14 @@ async def process_message(request: ProcessMessageRequest = Body(...)):
 async def handle_change_action(request: ChangeActionRequest):
     """Handle accept/deny actions for pending changes"""
     client = create_openai_client()
+    try: 
+        credentials = get_google_creds(request.email)
+    except:
+        return ChangeActionResponse(
+                success=False,
+                message="Please try logging in again and retry.",
+                intent="General"  # Switch back to general conversation
+            )
     
     if request.action.lower() == "accept":
         # Handle acceptance
@@ -409,7 +417,7 @@ async def handle_change_action(request: ChangeActionRequest):
             if attendees:
                 attendee_info = f" with {', '.join(attendees)}"
             
-            res = create_google_event(request.access_token, request.refresh_token, start_time, end_time, title)
+            res = create_google_event(credentials.token, credentials.refresh_token, start_time, end_time, title)
             
             message = f"Perfect! I've successfully scheduled '{title}' {time_info}{attendee_info} Here's the link {res}. Is there anything else I can help you with?"
             

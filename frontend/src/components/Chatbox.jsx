@@ -82,10 +82,8 @@ const Chatbox = () => {
     // Send acceptance to the dedicated endpoint
     const requestBody = {
       action: "accept",
-      session_id: "your-session-id",
-      access_token: getCookie('access_token'),
-      //TODO Unsafe, need to change refresh token
-      refresh_token: getCookie('refresh_token'),
+      session_id: getCookie('session_token'),
+      email: getCookie('email'),
       change_details: pendingChanges, // Send the change details that were accepted
       conversation_history: messages.slice(-HISTORY_WINDOW)
     };

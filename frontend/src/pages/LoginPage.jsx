@@ -8,30 +8,42 @@ const LoginPage = () => {
   
     // Check login status
     // --- NEW FLOW: Firebase Auth ---
-    const handleLogin = async () => {
-        const provider = new GoogleAuthProvider();
-        provider.addScope('https://www.googleapis.com/auth/gmail.modify');
-        provider.addScope('https://www.googleapis.com/auth/calendar');
-        try {
-            const result = await signInWithPopup(auth, provider);
-            const idToken = await result.user.getIdToken();
-            const credential = GoogleAuthProvider.credentialFromResult(result);
-            const accessToken = credential?.accessToken;
-            const refreshToken = result.user.refreshToken; // Firebase does not expose Google refreshToken directly
-            // Send all tokens to your backend for verification and Google API access
-            const res = await api.post("/auth/firebase", {
-                id_token: idToken,
-                access_token: accessToken,
-                refresh_token: refreshToken
-            });
-            const { access_token, email } = res.data;
-            localStorage.setItem("token", access_token);
-            localStorage.setItem("email", email);
-            navigate("/");
-            console.log("Logged in with Firebase, token:", access_token);
-        } catch (err) {
-            console.error("Firebase login failed:", err);
-        }
+    // const handleLogin = async () => {
+    //     const provider = new GoogleAuthProvider();
+    //     // provider.addScope('userid');
+    //     provider.addScope('https://www.googleapis.com/auth/gmail.modify');
+    //     provider.addScope('https://www.googleapis.com/auth/calendar');
+    //     try {
+    //         const result = await signInWithPopup(auth, provider);
+    //         const idToken = await result.user.getIdToken();
+    //         const credential = GoogleAuthProvider.credentialFromResult(result);
+    //         const accessToken = credential?.accessToken;
+    //         const refreshToken = result.user.refreshToken; // Firebase does not expose Google refreshToken directly
+    //         // Send all tokens to your backend for verification and Google API access
+    //         const res = await api.post("/auth/firebase", {
+    //             id_token: idToken,
+    //             access_token: accessToken,
+    //             refresh_token: refreshToken
+    //         });
+    //         const { access_token, email } = res.data;
+    //         localStorage.setItem("token", access_token);
+    //         localStorage.setItem("email", email);
+    //         navigate("/");
+    //         console.log("Logged in with Firebase, token:", access_token);
+    //     } catch (err) {
+    //         console.error("Firebase login failed:", err);
+    //     }
+    // };
+
+    const handleLogin = () => {
+        const redirectUri = encodeURIComponent("http://localhost:8000/auth/callback");
+        const clientId = "1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com";
+        const scope = encodeURIComponent("openid https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/userinfo.email");
+
+        
+        const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&include_granted_scopes=false&state=tempra`;
+        
+        window.location.href = authUrl;
     };
 
   const handleSuccess = async (credentialResponse) => {

@@ -10,6 +10,7 @@ from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from firebase import db
 from firebase_admin import auth as firebase_auth
+import json
 router = APIRouter()
 
 SECRET = "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"
@@ -118,9 +119,10 @@ def google_oauth_callback(request: Request, code: str):
                 "token_uri": "https://oauth2.googleapis.com/token",
             }
         },
-        scopes=["openid", "https://www.googleapis.com/auth/userinfo.email",
+        scopes=["openid",
                 "https://www.googleapis.com/auth/calendar",
-                "https://www.googleapis.com/auth/gmail.modify"],
+                "https://www.googleapis.com/auth/gmail.modify",
+                "https://www.googleapis.com/auth/userinfo.email"],
         redirect_uri="http://localhost:8000/auth/callback"
     )
     flow.redirect_uri = "http://localhost:8000/auth/callback"
@@ -130,7 +132,8 @@ def google_oauth_callback(request: Request, code: str):
         f"redirect_uri=http://localhost:8000/auth/callback",
         f"response_type=code",
         f"scope={' '.join(flow.scopes)}",
-        f"prompt=consent"
+        f"prompt=consent",
+        "access_type=offline"
     ])
     flow.fetch_token(code=code)
     creds = flow.credentials
@@ -147,6 +150,13 @@ def google_oauth_callback(request: Request, code: str):
     redirect.set_cookie(
     key="session_token",
     value=session_token,
+    httponly=True,
+    secure=False,  # True in production
+    samesite="Lax"
+    )
+    redirect.set_cookie(
+    key="email",
+    value=email,
     httponly=True,
     secure=False,  # True in production
     samesite="Lax"

@@ -6,33 +6,33 @@ function Navbar() {
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [email, setEmail] = useState(null);
     const [loading, setLoading] = useState(true);
+    const checkLogin = async () => {
+      try {
+        const res = await fetch("http://localhost:8000/auth/me", {
+          credentials: "include",
+        });
+        if (!res.ok) throw new Error("Not logged in");
+        const data = await res.json();
+        setEmail(data.email);
+      } catch (err) {
+        setEmail(null);
+      } finally {
+        setLoading(false);
+        return true
+      }
+    };
 
-    useEffect(() => {
-      const checkLogin = async () => {
-        try {
-          const res = await fetch("http://localhost:8000/auth/me", {
-            credentials: "include",
-          });
-          if (!res.ok) throw new Error("Not logged in");
-          const data = await res.json();
-          setEmail(data.email);
-        } catch (err) {
-          setEmail(null);
-        } finally {
-          setLoading(false);
-          return true
-        }
-      };
-      const stat = checkLogin()
-      console.log(stat)
-      // const interval = setInterval(() => {
-      //   const stat = checkLogin()
-      //   console.log(stat)
-      //   setIsLoggedIn(!!stat);  // Updates if token appears/disappears
-      // }, 1000); // check every 1 second
+    // useEffect( () => {
+    //   const interval = setInterval(async () => {
+    //     const stat = await checkLogin()
+    //     if (stat == true) {
+    //       setIsLoggedIn(true); 
+    //     }
+    //      // Updates if token appears/disappears
+    //   }, 1000); // check every 1 second
     
-      // return () => clearInterval(interval); 
-    }, []);
+    //   return () => clearInterval(interval); 
+    // }, []);
 
     const handleLogout = () => {
       localStorage.removeItem("token");
