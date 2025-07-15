@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, Cookie
+from fastapi import APIRouter, Depends, HTTPException, Request, Cookie, Header
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
 from google_auth_oauthlib.flow import Flow
@@ -7,8 +7,9 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
 from google.oauth2 import id_token
-from google.auth.transport import requests as google_requests 
+from google.auth.transport import requests as google_requests
 from firebase import db
+from firebase_admin import auth as firebase_auth
 router = APIRouter()
 
 SECRET = "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"
@@ -66,12 +67,42 @@ def login_with_google(data: GoogleToken):
     # # Return user's JWT
     return create_token(email)
 
-@router.get("/me")
-def get_user(session_token: str = Cookie(...)):
+@router.post("/auth/firebase")
+def firebase_login(data: dict):
+    id_token = data.get("id_token")
+    if not id_token:
+        raise HTTPException(status_code=400, detail="Missing ID token")
     try:
-        payload = jwt.decode(session_token, SECRET, algorithms=[ALGORITHM])
+        decoded_token = firebase_auth.verify_id_token(id_token)
+        email = decoded_token.get("email")
+        if not email:
+            raise HTTPException(status_code=400, detail="No email in token")
+        # Optionally, create user record in Firestore if not exists
+        if not db.collection("users").document(email).get().exists:
+            db.collection("users").document(email).set({})
+        return create_token(email)
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid authentication token: {e}")
+
+@router.get("/me")
+def get_user(
+    session_token: str = Cookie(None),
+    authorization: str = Header(None)
+):
+    print("Session token (cookie):", session_token)
+    print("Authorization header:", authorization)
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ", 1)[1]
+    elif session_token:
+        token = session_token
+    if not token:
+        raise HTTPException(status_code=401, detail="No session token provided")
+    try:
+        payload = jwt.decode(token, SECRET, algorithms=[ALGORITHM])
         return {"email": payload["sub"]}
-    except JWTError:
+    except JWTError as e:
+        print("JWTError:", e)
         raise HTTPException(status_code=401, detail="Invalid session")
 
 
@@ -111,7 +142,7 @@ def google_oauth_callback(request: Request, code: str):
         "sub": email,
         "exp": datetime.now(timezone.utc) + timedelta(hours=2)
     }, SECRET, algorithm="HS256")
-    
+
     redirect = RedirectResponse("http://localhost:5173/")
     redirect.set_cookie(
     key="session_token",
