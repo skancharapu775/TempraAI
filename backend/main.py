@@ -32,6 +32,7 @@ class ProcessMessageRequest(BaseModel):
     conversation_history: Optional[List[dict]] = None
     current_intent: Optional[str] = None
     pending_changes: Optional[dict] = None
+    email: str
 
 class ProcessMessageResponse(BaseModel):
     reply: str
@@ -355,10 +356,9 @@ async def process_message(request: ProcessMessageRequest = Body(...)):
             client, request.message, request.pending_changes
         )
     elif intent == "Email":
+        creds = get_google_creds(request.email)
         reply, pending_changes, show_accept_deny = await handle_email_intent(
-            client, request.message, request.pending_changes,
-            access_token=request.access_token,
-            refresh_token=request.refresh_token
+            client, request.message, request.pending_changes, creds.token, creds.refresh_token
         )
     elif intent == "Remind":
         reply, pending_changes, show_accept_deny = await handle_remind_intent(
@@ -383,7 +383,7 @@ async def process_message(request: ProcessMessageRequest = Body(...)):
 
 @app.post("/handle-change-action", response_model=ChangeActionResponse)
 async def handle_change_action(request: ChangeActionRequest):
-    """Handle accept/deny actions for pending changes"""
+    print("Received /handle-change-action request:", request)
     client = create_openai_client()
     try: 
         credentials = get_google_creds(request.email)
@@ -437,11 +437,10 @@ async def handle_change_action(request: ChangeActionRequest):
             scheduled_time = request.change_details.get("scheduled_time", "")
 
             # Actually send or save the email using Gmail API
-            from backend.emails import create_email_handler
             email_handler = create_email_handler(
                 provider="gmail",
-                access_token=request.access_token,
-                refresh_token=request.refresh_token,
+                access_token=credentials.token,
+                refresh_token=credentials.refresh_token,
                 client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
                 client_secret="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"
             )
@@ -477,11 +476,10 @@ async def handle_change_action(request: ChangeActionRequest):
             email_count = request.change_details.get("email_count", 25)
 
             # Initialize Gmail client
-            from backend.emails import create_email_handler
             email_handler = create_email_handler(
                 provider="gmail",
-                access_token=request.access_token,
-                refresh_token=request.refresh_token,
+                access_token=credentials.token,
+                refresh_token=credentials.refresh_token,
                 client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
                 client_secret="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"
             )

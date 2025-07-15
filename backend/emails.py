@@ -12,6 +12,7 @@ from google.auth.transport.requests import Request
 # from msgraph.core import GraphClient
 from azure.identity import ClientSecretCredential
 from openai import OpenAI
+from google.cloud import firestore
 
 # Gmail API setup
 GMAIL_SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
