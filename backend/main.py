@@ -44,7 +44,7 @@ class ProcessMessageResponse(BaseModel):
 # Request/Response Models for change actions
 class ChangeActionRequest(BaseModel):
     action: str  # "accept" or "deny"
-    session_token: str
+    session_id: str
     email: str
     change_details: dict  # The pending changes being acted upon
     conversation_history: Optional[List[dict]] = None
@@ -389,7 +389,9 @@ async def handle_change_action(request: ChangeActionRequest):
     client = create_openai_client()
     try: 
         credentials = get_google_creds(request.email)
+        print(credentials)
     except:
+        print("cldn't get crednetials")
         return ChangeActionResponse(
                 success=False,
                 message="Please try logging in again and retry.",

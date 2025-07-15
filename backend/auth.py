@@ -90,8 +90,6 @@ def get_user(
     session_token: str = Cookie(None),
     authorization: str = Header(None)
 ):
-    print("Session token (cookie):", session_token)
-    print("Authorization header:", authorization)
     token = None
     if authorization and authorization.startswith("Bearer "):
         token = authorization.split(" ", 1)[1]
@@ -150,18 +148,20 @@ def google_oauth_callback(request: Request, code: str):
     redirect.set_cookie(
     key="session_token",
     value=session_token,
-    httponly=True,
+    httponly=False,
     secure=False,  # True in production
     samesite="Lax"
     )
     redirect.set_cookie(
     key="email",
     value=email,
-    httponly=True,
+    httponly=False,
     secure=False,  # True in production
     samesite="Lax"
     )
 
+    print(creds.token)
+    print(email)
     db.collection("users").document(email).set({
         "access_token": creds.token,
         "refresh_token": creds.refresh_token,

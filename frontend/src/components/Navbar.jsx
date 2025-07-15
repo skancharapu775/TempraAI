@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Store, CircleUser, LogOut } from 'lucide-react';
+import { CircleUser, MessageCircleCode, LogOut } from 'lucide-react';
 import { useState, useEffect } from "react";
 
 function Navbar() {
@@ -18,21 +18,15 @@ function Navbar() {
         setEmail(null);
       } finally {
         setLoading(false);
-        return true
+        setIsLoggedIn(true);
       }
     };
 
-    // useEffect( () => {
-    //   const interval = setInterval(async () => {
-    //     const stat = await checkLogin()
-    //     if (stat == true) {
-    //       setIsLoggedIn(true); 
-    //     }
-    //      // Updates if token appears/disappears
-    //   }, 1000); // check every 1 second
-    
-    //   return () => clearInterval(interval); 
-    // }, []);
+    useEffect(() => {
+      checkLogin(); // immediately on mount
+      const interval = setInterval(checkLogin, 30000);
+      return () => clearInterval(interval);
+    }, []);
 
     const handleLogout = () => {
       localStorage.removeItem("token");
@@ -51,7 +45,7 @@ function Navbar() {
               <div className="flex items-center gap-4">
                 <Link to="/" className="flex items-center gap-2.5 hover:opacity-70 transition-all">
                   <div className="size-9 rounded-lg bg-primary/10 flex items-center justify-center">
-                    <Store className="w-6 h-6 text-blue-700" />
+                    <MessageCircleCode className="w-6 h-6 text-blue-700" />
                   </div>
                   <h1 className="text-lg font-bold text-white">TempraAI</h1>
                 </Link>

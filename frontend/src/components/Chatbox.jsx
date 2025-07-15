@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { ArrowUp } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import Cookies from 'js-cookie';
 
 const Chatbox = () => {
   const [messages, setMessages] = useState([]);
@@ -82,11 +83,13 @@ const Chatbox = () => {
     // Send acceptance to the dedicated endpoint
     const requestBody = {
       action: "accept",
-      session_id: getCookie('session_token'),
-      email: getCookie('email'),
+      session_id: Cookies.get('session_token'),
+      email: Cookies.get('email'),
       change_details: pendingChanges, // Send the change details that were accepted
       conversation_history: messages.slice(-HISTORY_WINDOW)
     };
+
+    console.log(requestBody);
 
     try {
       const res = await fetch("http://localhost:8000/handle-change-action", {
