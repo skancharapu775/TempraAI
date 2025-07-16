@@ -14,6 +14,7 @@ import base64
 from datetime import datetime, date
 import tzlocal
 from scheduling import create_schedule_handler
+from todo import create_todo_handler
 
 app = FastAPI(title="TempraAI API", version="1.0.0")
 app.add_middleware(
@@ -71,6 +72,7 @@ async def classify_intent_for_message(client, message: str, conversation_history
         - "Schedule": User wants to schedule a meeting, appointment, or event
         - "Remind": User wants to set a reminder or create a todo
         - "Email": User wants to send, draft, or compose an email
+        - "Todo": An item to be added, removed, or deleted from the todo list
         - "General": General conversation, questions, or other topics
         
         Return ONLY ONE WORD from the choices above.
@@ -109,6 +111,7 @@ async def check_intent_continuation(client, current_intent: str, message: str, c
         - "Schedule": Scheduling meetings, appointments, or events. For any scheduling related activities, remember to use ISO-8601
         - "Remind": Setting reminders or creating todos
         - "Email": Sending, drafting, or composing emails
+        - "Todo": An item to be added, removed, or deleted from the todo list
         - "General": General conversation, questions, or other topics
 
         IMPORTANT: If the user mentions SCHEDULING, REMINDERS, or EMAILS while in general intent, they are switching topics and you should respond "EXIT".
@@ -138,7 +141,7 @@ async def check_intent_continuation(client, current_intent: str, message: str, c
     print(f"DEBUG: Checking intent continuation for '{current_intent}' with message: '{message}'")
     
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4",
         messages=messages,
         max_tokens=10,
         temperature=0
@@ -267,6 +270,11 @@ async def handle_general_chat(client, message: str, conversation_history: List[d
     
     return response.choices[0].message.content.strip()
 
+async def handle_todo_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
+    """Delegate todo intent to todo.py handler."""
+    todo_handler = create_todo_handler()
+    return await todo_handler.handle_todo_intent(message, pending_changes)
+
 @app.post("/process-message", response_model=ProcessMessageResponse)
 async def process_message(request: ProcessMessageRequest = Body(...)):
     client = create_openai_client()
@@ -307,6 +315,10 @@ async def process_message(request: ProcessMessageRequest = Body(...)):
         )
     elif intent == "Remind":
         reply, pending_changes, show_accept_deny = await handle_remind_intent(
+            client, request.message, request.pending_changes
+        )
+    elif intent == "Todo":
+        reply, pending_changes, show_accept_deny = await handle_todo_intent(
             client, request.message, request.pending_changes
         )
     elif intent == "General":
