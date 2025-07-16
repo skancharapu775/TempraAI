@@ -15,6 +15,7 @@ from datetime import datetime, date
 import tzlocal
 from scheduling import create_schedule_handler
 from todo import create_todo_handler
+from goals import create_goals_handler
 
 app = FastAPI(title="TempraAI API", version="1.0.0")
 app.add_middleware(
@@ -67,12 +68,13 @@ def create_openai_client():
 async def classify_intent_for_message(client, message: str, conversation_history: List[dict] = None) -> str:
     """Classify the intent of a user message"""
     role = '''
-        Classify the user's intent into one of these categories: "Schedule", "Remind", "Email", "General".
+        Classify the user's intent into one of these categories: "Schedule", "Remind", "Email", "Todo", "Goal", "General".
         
         - "Schedule": User wants to schedule a meeting, appointment, or event
         - "Remind": User wants to set a reminder or create a todo
         - "Email": User wants to send, draft, or compose an email
         - "Todo": An item to be added, removed, or deleted from the todo list
+        - "Goal": User wants to set, plan, or break down a goal
         - "General": General conversation, questions, or other topics
         
         Return ONLY ONE WORD from the choices above.
@@ -112,14 +114,15 @@ async def check_intent_continuation(client, current_intent: str, message: str, c
         - "Remind": Setting reminders or creating todos
         - "Email": Sending, drafting, or composing emails
         - "Todo": An item to be added, removed, or deleted from the todo list
+        - "Goal": Setting, planning, or breaking down a goal
         - "General": General conversation, questions, or other topics
 
-        IMPORTANT: If the user mentions SCHEDULING, REMINDERS, or EMAILS while in general intent, they are switching topics and you should respond "EXIT".
+        IMPORTANT: If the user mentions SCHEDULING, REMINDERS, EMAILS, TODOS, or GOALS while in general intent, they are switching topics and you should respond "EXIT".
 
         If the user's message:
         - Continues providing information for the current task → respond "CONTINUE"
         - Asks to do something different or changes topic → respond "EXIT"
-        - Important: Mentions scheduling, reminders, or emails while in General → respond "EXIT"
+        - Important: Mentions scheduling, reminders, emails, todos, or goals while in General → respond "EXIT"
         - Is unclear or could go either way → respond "EXIT" (default to switching)
 
         Respond with ONLY "CONTINUE" or "EXIT".
@@ -275,6 +278,11 @@ async def handle_todo_intent(client, message: str, pending_changes: dict = None)
     todo_handler = create_todo_handler()
     return await todo_handler.handle_todo_intent(message, pending_changes)
 
+async def handle_goal_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
+    """Delegate goal intent to goals.py handler."""
+    goals_handler = create_goals_handler()
+    return await goals_handler.handle_goal_intent(message)
+
 @app.post("/process-message", response_model=ProcessMessageResponse)
 async def process_message(request: ProcessMessageRequest = Body(...)):
     client = create_openai_client()
@@ -324,6 +332,10 @@ async def process_message(request: ProcessMessageRequest = Body(...)):
     elif intent == "General":
         reply = await handle_general_chat(
             client, request.message, request.conversation_history
+        )
+    elif intent == "Goal":
+        reply, pending_changes, show_accept_deny = await handle_goal_intent(
+            client, request.message, request.pending_changes
         )
     else:
         # Default to general chat for unhandled intents
@@ -527,6 +539,19 @@ async def handle_change_action(request: ChangeActionRequest):
                 success=True,
                 message=message,
                 intent="General"  # Switch back to general conversation
+            )
+        elif request.change_details.get("type") == "goal":
+            # On accept, generate the week plan and return it
+            goals_handler = create_goals_handler()
+            goal = request.change_details.get("goal")
+            duration = request.change_details.get("duration")
+            calendar = request.change_details.get("calendar")
+            plan, plan_text = await goals_handler.generate_week_plan(goal, duration, calendar)
+            message = f"Goal plan accepted and saved!\n\nHere is your week-by-week plan:\n\n{plan_text}"
+            return ChangeActionResponse(
+                success=True,
+                message=message,
+                intent="General"
             )
         else:
             # Handle other change types
