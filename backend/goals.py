@@ -104,15 +104,16 @@ class GoalsHandler:
         )
         prompt = f"Goal: {goal}\nDuration: {duration} weeks\nBuild around calendar: {calendar}"
         response = self.openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=700,
+            max_tokens=900,  # try increasing this
             temperature=0.4
         )
         content = response.choices[0].message.content.strip()
+        print("[GOALS] Raw LLM output for plan:", content)  # <-- Add this line
         try:
             plan = json.loads(content)
             plan_text = "\n".join([
@@ -121,6 +122,7 @@ class GoalsHandler:
             ])
             return plan, plan_text
         except Exception as e:
+            print("[GOALS] JSON decode error:", e)
             return {"goal": goal, "duration": duration, "calendar": calendar, "plan": []}, "Sorry, I couldn't generate a plan."
 
 def create_goals_handler():

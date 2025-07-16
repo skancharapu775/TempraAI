@@ -68,16 +68,24 @@ def create_openai_client():
 async def classify_intent_for_message(client, message: str, conversation_history: List[dict] = None) -> str:
     """Classify the intent of a user message"""
     role = '''
-        Classify the user's intent into one of these categories: "Schedule", "Remind", "Email", "Todo", "Goal", "General".
+        You are an expert intent classifier for a smart assistant. Classify the user's intent into one of these categories: "Schedule", "Remind", "Email", "Todo", "Goal", "General".
         
-        - "Schedule": User wants to schedule a meeting, appointment, or event
-        - "Remind": User wants to set a reminder or create a todo
-        - "Email": User wants to send, draft, or compose an email
-        - "Todo": An item to be added, removed, or deleted from the todo list
-        - "Goal": User wants to set, plan, or break down a goal
-        - "General": General conversation, questions, or other topics
+        - "Schedule": User wants to schedule, book, or plan a meeting, appointment, or event (e.g., "Set up a meeting for Friday at 2pm", "Book a dentist appointment next week").
+        - "Remind": User wants to set a reminder or create a todo (e.g., "Remind me to call mom tomorrow", "Add 'buy milk' to my reminders").
+        - "Email": User wants to send, draft, organize, or search for an email (e.g., "Send an email to John", "Show me my unread emails").
+        - "Todo": User wants to add, remove, or check off an item from a todo list (e.g., "Add 'finish report' to my todo list", "Remove 'call plumber' from my todos").
+        - "Goal": User wants to set, plan, break down, or create a step-by-step plan for a goal (e.g., "Help me train for a marathon", "Create a plan to learn Spanish in 3 months").
+        - "General": General conversation, questions, or other topics (e.g., "How's the weather?", "Tell me a joke").
         
-        Return ONLY ONE WORD from the choices above.
+        Examples:
+        User: "Schedule a meeting with Sarah for next Monday at 10am" -> Schedule
+        User: "Remind me to water the plants every morning" -> Remind
+        User: "Send an email to my boss about the project update" -> Email
+        User: "Add 'read a book' to my todo list" -> Todo
+        User: "Help me create a 4-week workout plan" -> Goal
+        User: "What's the capital of France?" -> General
+        
+        Carefully read the user's message and context. Return ONLY ONE WORD from the choices above, with no punctuation or explanation.
     '''
     messages = [{"role": "system", "content": role}]
     if conversation_history:
@@ -87,15 +95,13 @@ async def classify_intent_for_message(client, message: str, conversation_history
         ]
         messages.extend(filtered_history)
     messages.append({"role": "user", "content": message})
-    
     print(f"DEBUG: Classifying intent for message: '{message}'")
     print(f"DEBUG: Messages sent to LLM: {messages}")
-    
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=messages,
         max_tokens=20,
-        temperature=0.3
+        temperature=0.1
     )
     intent = response.choices[0].message.content.strip()
     print(f"DEBUG: LLM response: '{response.choices[0].message.content}'")
@@ -105,7 +111,7 @@ async def classify_intent_for_message(client, message: str, conversation_history
 async def check_intent_continuation(client, current_intent: str, message: str, conversation_history: List[dict] = None) -> bool:
     """Check if user wants to continue current intent or switch topics"""
     system_prompt = f"""
-        You are managing a smart assistant's conversation. The current active task/intent is: {current_intent}.
+        You are an expert intent continuation classifier for a smart assistant. The current active task/intent is: {current_intent}.
 
         Your job is to determine if the user's message continues working on this current task or if they want to switch to a different topic.
 
@@ -117,19 +123,27 @@ async def check_intent_continuation(client, current_intent: str, message: str, c
         - "Goal": Setting, planning, or breaking down a goal
         - "General": General conversation, questions, or other topics
 
-        IMPORTANT: If the user mentions SCHEDULING, REMINDERS, EMAILS, TODOS, or GOALS while in general intent, they are switching topics and you should respond "EXIT".
+        Rules:
+        - If the user's message continues providing information, clarification, or details for the current task, respond CONTINUE.
+        - If the user's message asks to do something different, changes topic, or starts a new task, respond EXIT.
+        - If the user mentions scheduling, reminders, emails, todos, or goals while in General, respond EXIT.
+        - If the user mentions a different intent than the current one, respond EXIT.
+        - If the message is unclear or could go either way, default to EXIT.
 
-        If the user's message:
-        - Continues providing information for the current task → respond "CONTINUE"
-        - Asks to do something different or changes topic → respond "EXIT"
-        - Important: Mentions scheduling, reminders, emails, todos, or goals while in General → respond "EXIT"
-        - Is unclear or could go either way → respond "EXIT" (default to switching)
+        Examples:
+        (Current intent: Goal)
+        User: "Make it a 6-week plan instead" -> CONTINUE
+        User: "Actually, remind me to call my doctor" -> EXIT
+        (Current intent: Schedule)
+        User: "Add John as an attendee" -> CONTINUE
+        User: "Show me my emails" -> EXIT
+        (Current intent: General)
+        User: "Can you help me plan a workout routine?" -> EXIT
+        User: "Tell me a joke" -> CONTINUE
 
-        Respond with ONLY "CONTINUE" or "EXIT".
-        """
-
+        Carefully read the user's message and context. Respond with ONLY CONTINUE or EXIT, with no punctuation or explanation.
+    """
     messages = [{"role": "system", "content": system_prompt}]
-    
     # Add recent conversation context (last 3 messages to avoid confusion)
     if conversation_history:
         recent_history = conversation_history[-3:]  # Only last 3 messages
@@ -138,16 +152,13 @@ async def check_intent_continuation(client, current_intent: str, message: str, c
             if msg.get("content") is not None and msg.get("content").strip() != ""
         ]
         messages.extend(filtered_history)
-    
     messages.append({"role": "user", "content": message})
-    
     print(f"DEBUG: Checking intent continuation for '{current_intent}' with message: '{message}'")
-    
     response = client.chat.completions.create(
         model="gpt-4",
         messages=messages,
         max_tokens=10,
-        temperature=0
+        temperature=0.1
     )
     decision = response.choices[0].message.content.strip().upper()
     print(f"DEBUG: Intent continuation decision: {decision}")

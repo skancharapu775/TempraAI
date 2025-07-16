@@ -192,7 +192,7 @@ const Chatbox = () => {
           <div className="chat chat-start">
             <div className="chat-bubble rounded-md p-4 bg-gray-800 text-white">
               <div className="prose prose-invert max-w-none">
-                <p>Just a sec {loadingDots}</p>
+                <p>Thinking{loadingDots}</p>
               </div>
             </div>
           </div>
