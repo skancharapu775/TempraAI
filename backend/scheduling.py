@@ -7,6 +7,7 @@ from googleapiclient.discovery import build
 from format import format_event_details
 from openai import OpenAI
 import pytz
+import re
 
 eastern = pytz.timezone("America/New_York")
 now = datetime.now(eastern)
@@ -17,6 +18,17 @@ default_time_max = (now + timedelta(days=7)).strftime("%Y-%m-%dT23:59:59-05:00")
 CAL_SCOPES = ['https://www.googleapis.com/auth/calendar']
 SECRET = "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"
 CLIENT_ID = "1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com"
+
+def clean_llm_json(content):
+    # Remove code block markers
+    content = re.sub(r'^```(json)?', '', content.strip(), flags=re.IGNORECASE)
+    content = re.sub(r'```$', '', content.strip())
+    # Remove BOM
+    content = content.encode('utf-8').decode('utf-8-sig')
+    # Remove trailing commas before }
+    content = re.sub(r',\s*}', '}', content)
+    content = re.sub(r',\s*]', ']', content)
+    return content.strip()
 
 class ScheduleService:
     def __init__(self, access_token: str, refresh_token: str, client_id: str = CLIENT_ID, client_secret: str = SECRET):
@@ -68,7 +80,7 @@ class ScheduleIntentHandler:
         system_prompt = '''
         Classify the user's scheduling request into one of these categories:
         - "add": User wants to add a new event
-        - "edit": User wants to edit an existing event
+        - "edit": User wants to edit or move an existing event
         - "delete": User wants to delete an event
         - "summarize": User wants to summarize events for a period (day, week, month)
         Return ONLY ONE WORD from the choices above.
@@ -182,20 +194,20 @@ class ScheduleIntentHandler:
 
     async def edit_event(self, message: str, pending_changes: dict = None) -> Tuple[str, dict, bool]:
         """Extract edit details and return confirmation"""
-        system_prompt = '''
-        You are an assistant that extracts event edit details from the user's input. Guess which fields to update (title, start_time, end_time, attendees). List any missing or unclear fields and generate a polite confirmation message asking the user to confirm or correct. Use ISO 8601 for times.
-        REQUIRED FIELDS: event_id, at least one field to update
-        OPTIONAL FIELDS: title, start_time, end_time, attendees
-        Reply ONLY with a valid JSON object, and nothing else. Do NOT include any natural language, explanations, or code block markers. Example:
-        ```json
-        {"event_id": "...", "updates": {"title": "..."}, "missing_fields": ["event_id"], "confirmation_message": "..."}
-        ```
-        If there are any current known details, merge them with the JSON you return.
-        '''
         user_prompt = f"User message: {message}"
-
         # Use LLM to extract date range
         time_min, time_max = await self.extract_date_range_from_message(message)
+        # Expand the window by 24 hours on either side
+        from datetime import datetime, timedelta
+        def parse_iso(dt_str):
+            try:
+                return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+            except Exception:
+                return datetime.strptime(dt_str, "%Y-%m-%dT%H:%M:%S")
+        dt_min = parse_iso(time_min) - timedelta(hours=24)
+        dt_max = parse_iso(time_max) + timedelta(hours=24)
+        time_min = dt_min.isoformat().replace("+00:00", "Z")
+        time_max = dt_max.isoformat().replace("+00:00", "Z")
         print(f"[edit_event] Fetching events from {time_min} to {time_max}")
         events = self.schedule_service.summarize_events(time_min, time_max)
         event_list = [
@@ -207,17 +219,42 @@ class ScheduleIntentHandler:
             }
             for e in events
         ]
+        event_list_str = json.dumps(event_list, indent=2)
+        system_prompt = f"""
+            You are an assistant that helps users edit calendar events. Here is a list of upcoming events:
+
+            {event_list_str}
+
+            The user wants to edit an event. Match the user's request to the most likely event from the list above, even if the match is not exact. If the event title is similar or the date is within a day of the user's request, consider it a match. If there are multiple possible matches, pick the closest one.
+            Reply ONLY with a valid JSON object, and nothing else. Do NOT include any natural language, explanations, or code block markers. Example:
+            ```json
+            {{
+            "event_id": "abc123",
+            "updates": {{"title": "New Title", "start_time": "2024-07-18T14:00:00Z"}},
+            "missing_fields": [],
+            "confirmation_message": "Are you sure you want to update 'Meeting with Rico' to the new details?"
+            }}
+            ```
+            If you cannot find a matching event, reply with:
+            ```json
+            {{
+            "event_id": null,
+            "updates": {{}},
+            "missing_fields": ["event_id"],
+            "confirmation_message": "I couldn't find a matching event. Please specify the event you want to edit."
+            }}
+            ```
+            """
+        print("LLM system prompt for edit_event:\n", system_prompt)
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
-            {"role": "assistant", "content": f"Here are the user's events for context (event_id, title, start_time, end_time):\n{json.dumps(event_list, indent=2)}"}
         ]
         if pending_changes:
             messages.append({
                 "role": "assistant",
                 "content": f"Current known details (JSON): {json.dumps(pending_changes)}"
             })
-        print("LLM system prompt for edit_event:\n", system_prompt)
         response = self.openai_client.chat.completions.create(
             model="gpt-4",
             messages=messages,
@@ -225,11 +262,9 @@ class ScheduleIntentHandler:
         )
         content = response.choices[0].message.content.strip()
         import re
-        # Remove code block markers if present
-        if content.startswith("```"):
-            content = re.sub(r"^```[a-zA-Z]*\n?", "", content)
-            content = re.sub(r"\n?```$", "", content)
-        content = content.strip()
+        # Robust JSON cleaning (same as delete_event)
+        content = clean_llm_json(content)
+        print("LLM raw response for edit event:", content)
         try:
             data = json.loads(content)
             data["type"] = "schedule_edit"
@@ -241,6 +276,8 @@ class ScheduleIntentHandler:
                 confirmation_message += f"\n\n---\n**📋 Update Details:**\n{details}\n---"
             return confirmation_message, data, show_accept_deny
         except Exception as e:
+            print("Error parsing edit event JSON:", e)
+            print("Raw content that failed to parse:", repr(content))
             return f"Sorry, I couldn't parse the edit details. Could you please provide the update information again?", None, False
 
     async def delete_event(self, message: str, pending_changes: dict = None) -> Tuple[str, dict, bool]:
@@ -250,6 +287,17 @@ class ScheduleIntentHandler:
 
         # Use LLM to extract date range
         time_min, time_max = await self.extract_date_range_from_message(message)
+        # Expand the window by 24 hours on either side
+        from datetime import datetime, timedelta
+        def parse_iso(dt_str):
+            try:
+                return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+            except Exception:
+                return datetime.strptime(dt_str, "%Y-%m-%dT%H:%M:%S")
+        dt_min = parse_iso(time_min) - timedelta(hours=24)
+        dt_max = parse_iso(time_max) + timedelta(hours=24)
+        time_min = dt_min.isoformat().replace("+00:00", "Z")
+        time_max = dt_max.isoformat().replace("+00:00", "Z")
         print(f"[delete_event] Fetching events from {time_min} to {time_max}")
         events = self.schedule_service.summarize_events(time_min, time_max)
         event_list = [
@@ -267,7 +315,7 @@ class ScheduleIntentHandler:
 
             {event_list_str}
 
-            The user wants to delete an event. Match the user's request to the most likely event from the list above.
+            The user wants to delete an event. Match the user's request to the most likely event from the list above, even if the match is not exact. If the event title is similar or the date is within a day of the user's request, consider it a match. If there are multiple possible matches, pick the closest one.
             Reply ONLY with a valid JSON object, and nothing else. Do NOT include any natural language, explanations, or code block markers. Example:
             ```json
             {{
@@ -287,7 +335,6 @@ class ScheduleIntentHandler:
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
-            {"role": "assistant", "content": f"Here are the user's events for context (event_id, title, start_time, end_time):\n{json.dumps(event_list, indent=2)}"}
         ]
         if pending_changes:
             messages.append({
@@ -313,11 +360,13 @@ class ScheduleIntentHandler:
             missing_fields = data.get("missing_fields", [])
             show_accept_deny = len(missing_fields) == 0
             confirmation_message = data["confirmation_message"]
-            details = self.format_event_details(data)
+            details = format_event_details(data)
             if details:
                 confirmation_message += f"\n\n---\n**📋 Event to Delete:**\n{details}\n---"
             return confirmation_message, data, show_accept_deny
         except Exception as e:
+            print("Error parsing delete event JSON:", e)
+            print("Raw content that failed to parse:", repr(content))
             return f"Sorry, I couldn't parse the delete details. Could you please provide the event information again?", None, False
 
     async def summarize_events_intent(self, message: str) -> str:
