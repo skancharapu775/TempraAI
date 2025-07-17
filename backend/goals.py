@@ -43,7 +43,7 @@ class GoalsHandler:
                 "content": f"Current known details (JSON): {json.dumps(pending_changes)}"
             })
         response = self.openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",
             messages=messages,
             temperature=0.4
         )
@@ -75,7 +75,7 @@ class GoalsHandler:
     async def extract_goal(self, message):
         prompt = f"Extract the main goal from this message: {message}\nOnly reply with the goal statement."
         response = self.openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=60,
             temperature=0

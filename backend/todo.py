@@ -16,7 +16,7 @@ class TodoHandler:
         Return ONLY ONE WORD from the choices above.
         """
         response = self.openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": message}
@@ -74,7 +74,7 @@ class TodoHandler:
     async def extract_todo_name(self, message):
         prompt = f"Extract the todo name from this message: {message}\nOnly reply with the todo name."
         response = self.openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=30,
             temperature=0

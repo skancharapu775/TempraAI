@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { ArrowUp } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import Cookies from 'js-cookie';
+import { Mic, MicOff } from 'lucide-react'; // Optional: for mic icon
 
 const Chatbox = () => {
   const [messages, setMessages] = useState([]);
@@ -12,13 +13,16 @@ const Chatbox = () => {
   const [currentIntent, setCurrentIntent] = useState(null);
   const [showAcceptDeny, setShowAcceptDeny] = useState(false);
   const messagesEndRef = useRef(null);
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef(null);
 
   const HISTORY_WINDOW = 12;
 
   // Centralized message handler
-  const handleSendMessage = async () => {
-    if (!input.trim()) return;
-    const userMessage = { role: "user", content: input };
+  const handleSendMessage = async (msg) => {
+    const messageToSend = typeof msg === 'string' ? msg : input;
+    if (!messageToSend.trim()) return;
+    const userMessage = { role: "user", content: messageToSend };
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
 
@@ -26,7 +30,7 @@ const Chatbox = () => {
     const windowedHistory = [...messages, userMessage].slice(-HISTORY_WINDOW);
 
     const requestBody = {
-      message: input,
+      message: messageToSend,
       session_id: "your-session-id", // Replace with actual session management
       conversation_history: windowedHistory,
       current_intent: currentIntent,
@@ -140,6 +144,47 @@ const Chatbox = () => {
     }
   };
 
+  // Speech-to-text logic
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  const startListening = () => {
+    if (!SpeechRecognition) {
+      alert("Speech recognition not supported in this browser.");
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      setInput(transcript);
+      setListening(false);
+      if (transcript && transcript.trim() !== "") {
+        handleSendMessage(transcript);
+      }
+    };
+
+    recognition.onerror = (event) => {
+      alert("Speech recognition error: " + event.error);
+      setListening(false);
+    };
+
+    recognition.onend = () => setListening(false);
+
+    recognition.start();
+    setListening(true);
+    recognitionRef.current = recognition;
+  };
+
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      setListening(false);
+    }
+  };
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -219,10 +264,23 @@ const Chatbox = () => {
             onKeyDown={handleKeyPress}
             placeholder="What do you want me to do?"
           />
-          <button className="btn btn-neutral btn-circle bg-gray-700 hover:bg-gray-600" onClick={handleSendMessage}>
+          {/* Microphone button */}
+          <button
+            className={`btn btn-circle ${listening ? 'bg-red-600' : 'bg-gray-700 hover:bg-gray-600'} text-white flex items-center justify-center`}
+            type="button"
+            onClick={listening ? stopListening : startListening}
+            aria-label={listening ? "Stop listening" : "Start listening"}
+            style={{ outline: listening ? '2px solid #f87171' : 'none' }}
+          >
+            {listening ? <MicOff /> : <Mic />}
+          </button>
+          <button className="btn btn-neutral btn-circle bg-gray-700 hover:bg-gray-600" onClick={() => handleSendMessage()}>
             <ArrowUp />
           </button>
         </div>
+        {listening && (
+          <div className="text-center text-red-400 mt-2 animate-pulse">Listening... Speak now!</div>
+        )}
       </div>
     </div>
   );

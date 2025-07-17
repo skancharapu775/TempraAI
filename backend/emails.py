@@ -81,7 +81,7 @@ class EmailIntentHandler:
         """
         
         response = self.openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": message}
@@ -142,7 +142,7 @@ class EmailIntentHandler:
             """
             
             response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4",
                 messages=[{"role": "user", "content": summary_prompt}],
                 max_tokens=500,
                 temperature=0.7
@@ -231,15 +231,31 @@ class EmailIntentHandler:
             ]
 
             response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4",
                 messages=messages,
                 max_tokens=300,
                 temperature=0.3
             )
             
             try:
-                org_data = json.loads(response.choices[0].message.content.strip())
+                content = response.choices[0].message.content.strip()
+                # Debug: Print the raw LLM response
+                print(f"LLM raw response for email organize: {content}")
+                
+                # Clean the response - remove code blocks if present
+                if content.startswith('```'):
+                    content = content.split('```')[1]  # Remove first code block
+                    if content.startswith('json'):
+                        content = content[4:]  # Remove 'json' marker
+                    content = content.strip()
+                
+                # Remove any trailing code blocks
+                if content.endswith('```'):
+                    content = content[:-3].strip()
+                
+                org_data = json.loads(content)
             except:
+                print(f"Error parsing email organize JSON, using fallback")
                 org_data = {
                     "created_folders": ["Work", "Personal"],
                     "existing_folders": ["Inbox"],
@@ -309,15 +325,31 @@ class EmailIntentHandler:
             """
             
             response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4",
                 messages=[{"role": "user", "content": search_prompt}],
                 max_tokens=200,
                 temperature=0.3
             )
             
             try:
-                search_data = json.loads(response.choices[0].message.content.strip())
+                content = response.choices[0].message.content.strip()
+                # Debug: Print the raw LLM response
+                print(f"LLM raw response for email search: {content}")
+                
+                # Clean the response - remove code blocks if present
+                if content.startswith('```'):
+                    content = content.split('```')[1]  # Remove first code block
+                    if content.startswith('json'):
+                        content = content[4:]  # Remove 'json' marker
+                    content = content.strip()
+                
+                # Remove any trailing code blocks
+                if content.endswith('```'):
+                    content = content[:-3].strip()
+                
+                search_data = json.loads(content)
             except:
+                print(f"Error parsing email search JSON, using fallback")
                 search_data = {"query": message, "limit": 10}
             
             # Perform search
@@ -357,7 +389,7 @@ class EmailIntentHandler:
         Then, list any missing or unclear fields and generate a polite confirmation message asking the user to confirm or correct.
 
         REQUIRED FIELDS: subject, recipient, body
-        OPTIONAL FIELDS: attachments, folder, priority
+        OPTIONAL FIELDS: attachments, folder, priority, action
 
         FOLDER EXAMPLES:
         - "Work" - Work-related emails
@@ -365,6 +397,10 @@ class EmailIntentHandler:
         - "Projects" - Project-specific emails
         - "Inbox" - Default folder
         - "Archive" - Archived emails
+
+        ACTION EXAMPLES:
+        - "draft" - Create a draft (default)
+        - "send" - Send immediately
 
         Reply *only* with valid JSON. Example:
         {
@@ -374,6 +410,7 @@ class EmailIntentHandler:
         "attachments": [],    // optional list of attachments
         "folder": "Work",     // optional: target folder
         "priority": "normal", // optional: "high", "medium", "low"
+        "action": "draft",    // optional: "draft" or "send"
         "missing_fields": ["recipient", ...], // only include required fields that are missing
         "confirmation_message": "..."
         }
@@ -392,7 +429,7 @@ class EmailIntentHandler:
             })
 
         response = self.openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",
             messages=messages,
             temperature=0.4
         )
@@ -400,6 +437,20 @@ class EmailIntentHandler:
         content = response.choices[0].message.content.strip()
         
         try:
+            # Debug: Print the raw LLM response
+            print(f"LLM raw response for email compose: {content}")
+            
+            # Clean the response - remove code blocks if present
+            if content.startswith('```'):
+                content = content.split('```')[1]  # Remove first code block
+                if content.startswith('json'):
+                    content = content[4:]  # Remove 'json' marker
+                content = content.strip()
+            
+            # Remove any trailing code blocks
+            if content.endswith('```'):
+                content = content[:-3].strip()
+            
             data = json.loads(content)
             data["type"] = "email_compose"
             print(f"Email compose proposal: {data}")
@@ -417,7 +468,21 @@ class EmailIntentHandler:
             
             return confirmation_message, data, show_accept_deny
         except Exception as e:
+            print(f"Error parsing email compose JSON: {e}")
+            print(f"Raw content that failed to parse: {repr(content)}")
             return f"Sorry, I couldn't parse the email details. Could you please provide the email information again?", None, False
+
+    async def send_email_immediately(self, subject: str, recipient: str, body: str, attachments: List[str] = None) -> str:
+        """Send an email immediately (not as draft)"""
+        try:
+            if self.email_service.provider == "gmail":
+                return await self.send_gmail_email(subject, recipient, body, attachments)
+            else:
+                # For Outlook, you'd implement similar logic
+                raise NotImplementedError("Outlook immediate sending not implemented yet")
+        except Exception as e:
+            print(f"Error sending email immediately: {e}")
+            raise e
     
     async def manage_drafts(self, message: str) -> Tuple[str, dict, bool]:
         """Manage email drafts"""
@@ -470,7 +535,7 @@ class EmailIntentHandler:
             })
 
         response = self.openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",
             messages=messages,
             temperature=0.4
         )
@@ -478,6 +543,20 @@ class EmailIntentHandler:
         content = response.choices[0].message.content.strip()
         
         try:
+            # Debug: Print the raw LLM response
+            print(f"LLM raw response for email schedule: {content}")
+            
+            # Clean the response - remove code blocks if present
+            if content.startswith('```'):
+                content = content.split('```')[1]  # Remove first code block
+                if content.startswith('json'):
+                    content = content[4:]  # Remove 'json' marker
+                content = content.strip()
+            
+            # Remove any trailing code blocks
+            if content.endswith('```'):
+                content = content[:-3].strip()
+            
             data = json.loads(content)
             data["type"] = "email_schedule"
             
@@ -491,6 +570,8 @@ class EmailIntentHandler:
             
             return confirmation_message, data, show_accept_deny
         except Exception as e:
+            print(f"Error parsing email schedule JSON: {e}")
+            print(f"Raw content that failed to parse: {repr(content)}")
             return f"Sorry, I couldn't parse the scheduling details: {str(e)}", None, False
 
     # Helper methods for email operations
@@ -665,6 +746,164 @@ class EmailIntentHandler:
         except Exception as e:
             print(f"Error getting Gmail drafts: {e}")
             return []
+
+    async def create_gmail_draft(self, subject: str, recipient: str, body: str, attachments: List[str] = None) -> str:
+        """Create a Gmail draft"""
+        try:
+            # Create the email message
+            message = MIMEMultipart()
+            message['to'] = recipient
+            message['subject'] = subject
+            
+            # Add body
+            text_part = MIMEText(body, 'plain')
+            message.attach(text_part)
+            
+            # Add attachments if any
+            if attachments:
+                for attachment_path in attachments:
+                    if os.path.exists(attachment_path):
+                        with open(attachment_path, 'rb') as f:
+                            attachment = MIMEText(f.read(), 'base64')
+                            attachment.add_header('Content-Disposition', 'attachment', filename=os.path.basename(attachment_path))
+                            message.attach(attachment)
+            
+            # Encode the message
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+            
+            # Create draft
+            draft = self.email_service.client.users().drafts().create(
+                userId='me',
+                body={'message': {'raw': raw_message}}
+            ).execute()
+            
+            return draft['id']
+        except Exception as e:
+            print(f"Error creating Gmail draft: {e}")
+            raise e
+
+    async def send_gmail_email(self, subject: str, recipient: str, body: str, attachments: List[str] = None) -> str:
+        """Send a Gmail email"""
+        try:
+            # Create the email message
+            message = MIMEMultipart()
+            message['to'] = recipient
+            message['subject'] = subject
+            
+            # Add body
+            text_part = MIMEText(body, 'plain')
+            message.attach(text_part)
+            
+            # Add attachments if any
+            if attachments:
+                for attachment_path in attachments:
+                    if os.path.exists(attachment_path):
+                        with open(attachment_path, 'rb') as f:
+                            attachment = MIMEText(f.read(), 'base64')
+                            attachment.add_header('Content-Disposition', 'attachment', filename=os.path.basename(attachment_path))
+                            message.attach(attachment)
+            
+            # Encode the message
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+            
+            # Send email
+            sent_message = self.email_service.client.users().messages().send(
+                userId='me',
+                body={'raw': raw_message}
+            ).execute()
+            
+            return sent_message['id']
+        except Exception as e:
+            print(f"Error sending Gmail email: {e}")
+            raise e
+
+    async def move_emails_to_folder(self, email_ids: List[str], folder_name: str) -> bool:
+        """Move emails to a specific folder/label"""
+        try:
+            # First, get or create the label
+            label_id = await self.get_or_create_gmail_label(folder_name)
+            
+            # Add the label to the emails
+            self.email_service.client.users().messages().modify(
+                userId='me',
+                body={'addLabelIds': [label_id]},
+                id=','.join(email_ids)
+            ).execute()
+            
+            return True
+        except Exception as e:
+            print(f"Error moving emails to folder: {e}")
+            return False
+
+    async def get_or_create_gmail_label(self, label_name: str) -> str:
+        """Get existing label or create new one"""
+        try:
+            # First, try to find existing label
+            labels = self.email_service.client.users().labels().list(userId='me').execute()
+            
+            for label in labels.get('labels', []):
+                if label['name'].lower() == label_name.lower():
+                    return label['id']
+            
+            # If not found, create new label
+            return await self.create_gmail_label(label_name)
+        except Exception as e:
+            print(f"Error getting/creating Gmail label: {e}")
+            raise e
+
+    async def delete_gmail_draft(self, draft_id: str) -> bool:
+        """Delete a Gmail draft"""
+        try:
+            self.email_service.client.users().drafts().delete(
+                userId='me', id=draft_id
+            ).execute()
+            return True
+        except Exception as e:
+            print(f"Error deleting Gmail draft: {e}")
+            return False
+
+    async def update_gmail_draft(self, draft_id: str, subject: str = None, recipient: str = None, body: str = None) -> bool:
+        """Update a Gmail draft"""
+        try:
+            # Get current draft
+            draft = self.email_service.client.users().drafts().get(
+                userId='me', id=draft_id
+            ).execute()
+            
+            message = draft['message']
+            headers = message['payload']['headers']
+            
+            # Update headers if provided
+            if subject:
+                for header in headers:
+                    if header['name'] == 'Subject':
+                        header['value'] = subject
+                        break
+                else:
+                    headers.append({'name': 'Subject', 'value': subject})
+            
+            if recipient:
+                for header in headers:
+                    if header['name'] == 'To':
+                        header['value'] = recipient
+                        break
+                else:
+                    headers.append({'name': 'To', 'value': recipient})
+            
+            # Update body if provided
+            if body:
+                # This is a simplified version - in practice, you'd need to handle MIME parts properly
+                message['payload']['body']['data'] = base64.urlsafe_b64encode(body.encode('utf-8')).decode('utf-8')
+            
+            # Update the draft
+            self.email_service.client.users().drafts().update(
+                userId='me', id=draft_id, body=draft
+            ).execute()
+            
+            return True
+        except Exception as e:
+            print(f"Error updating Gmail draft: {e}")
+            return False
 
     # Outlook-specific methods
     async def get_outlook_recent_emails(self, limit: int) -> List[Dict]:

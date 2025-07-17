@@ -1,11 +1,18 @@
 import os
 import json
 from typing import List, Dict, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from format import format_event_details
 from openai import OpenAI
+import pytz
+
+eastern = pytz.timezone("America/New_York")
+now = datetime.now(eastern)
+today_str = now.strftime("%Y-%m-%d")
+default_time_min = now.strftime("%Y-%m-%dT00:00:00-05:00")  # or use .isoformat()
+default_time_max = (now + timedelta(days=7)).strftime("%Y-%m-%dT23:59:59-05:00")
 
 CAL_SCOPES = ['https://www.googleapis.com/auth/calendar']
 SECRET = "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"
@@ -67,7 +74,7 @@ class ScheduleIntentHandler:
         Return ONLY ONE WORD from the choices above.
         '''
         response = self.openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": message}
@@ -127,7 +134,7 @@ class ScheduleIntentHandler:
                 "content": f"Current known details (JSON): {json.dumps(pending_changes)}"
             })
         response = self.openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",
             messages=messages,
             temperature=0.4
         )
@@ -145,32 +152,84 @@ class ScheduleIntentHandler:
         except Exception as e:
             return f"Sorry, I couldn't parse the event details. Could you please provide the event information again?", None, False
 
+    async def extract_date_range_from_message(self, message: str) -> tuple:
+        system_prompt = f'''
+        Today is {today_str}.
+        Extract the date or date range from the user's message. Return valid JSON like:
+        {{"time_min": "2025-07-16T00:00:00Z", "time_max": "2025-07-16T23:59:59Z"}}
+        or for a range:
+        {{"time_min": "2025-07-16T00:00:00Z", "time_max": "2025-07-20T23:59:59Z"}}
+        If no date is given, use today's date as time_min and 7 days from today as time_max.
+        All times must be in ISO 8601 format with Z (UTC).
+        '''
+        user_prompt = f"User message: {message}"
+        try:
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1
+            )
+            content = response.choices[0].message.content.strip()
+            data = json.loads(content)
+            time_min = data.get("time_min", default_time_min)
+            time_max = data.get("time_max", default_time_max)
+            return time_min, time_max
+        except Exception:
+            return default_time_min, default_time_max
+
     async def edit_event(self, message: str, pending_changes: dict = None) -> Tuple[str, dict, bool]:
         """Extract edit details and return confirmation"""
         system_prompt = '''
         You are an assistant that extracts event edit details from the user's input. Guess which fields to update (title, start_time, end_time, attendees). List any missing or unclear fields and generate a polite confirmation message asking the user to confirm or correct. Use ISO 8601 for times.
         REQUIRED FIELDS: event_id, at least one field to update
         OPTIONAL FIELDS: title, start_time, end_time, attendees
-        Reply *only* with valid JSON. Example:
+        Reply ONLY with a valid JSON object, and nothing else. Do NOT include any natural language, explanations, or code block markers. Example:
+        ```json
         {"event_id": "...", "updates": {"title": "..."}, "missing_fields": ["event_id"], "confirmation_message": "..."}
+        ```
         If there are any current known details, merge them with the JSON you return.
         '''
         user_prompt = f"User message: {message}"
+
+        # Use LLM to extract date range
+        time_min, time_max = await self.extract_date_range_from_message(message)
+        print(f"[edit_event] Fetching events from {time_min} to {time_max}")
+        events = self.schedule_service.summarize_events(time_min, time_max)
+        event_list = [
+            {
+                "event_id": e["id"],
+                "title": e.get("summary", "(No Title)"),
+                "start_time": e["start"].get("dateTime", e["start"].get("date", "")),
+                "end_time": e["end"].get("dateTime", e["end"].get("date", "")),
+            }
+            for e in events
+        ]
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "user", "content": user_prompt},
+            {"role": "assistant", "content": f"Here are the user's events for context (event_id, title, start_time, end_time):\n{json.dumps(event_list, indent=2)}"}
         ]
         if pending_changes:
             messages.append({
                 "role": "assistant",
                 "content": f"Current known details (JSON): {json.dumps(pending_changes)}"
             })
+        print("LLM system prompt for edit_event:\n", system_prompt)
         response = self.openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",
             messages=messages,
             temperature=0.4
         )
         content = response.choices[0].message.content.strip()
+        import re
+        # Remove code block markers if present
+        if content.startswith("```"):
+            content = re.sub(r"^```[a-zA-Z]*\n?", "", content)
+            content = re.sub(r"\n?```$", "", content)
+        content = content.strip()
         try:
             data = json.loads(content)
             data["type"] = "schedule_edit"
@@ -186,18 +245,49 @@ class ScheduleIntentHandler:
 
     async def delete_event(self, message: str, pending_changes: dict = None) -> Tuple[str, dict, bool]:
         """Extract delete details and return confirmation"""
-        system_prompt = '''
-        You are an assistant that extracts event deletion details from the user's input. Guess which event to delete (event_id, title, or time). List any missing or unclear fields and generate a polite confirmation message asking the user to confirm or correct.
-        REQUIRED FIELDS: event_id
-        OPTIONAL FIELDS: title, start_time, end_time
-        Reply *only* with valid JSON. Example:
-        {"event_id": "...", "title": "...", "missing_fields": ["event_id"], "confirmation_message": "..."}
-        If there are any current known details, merge them with the JSON you return.
-        '''
+
         user_prompt = f"User message: {message}"
+
+        # Use LLM to extract date range
+        time_min, time_max = await self.extract_date_range_from_message(message)
+        print(f"[delete_event] Fetching events from {time_min} to {time_max}")
+        events = self.schedule_service.summarize_events(time_min, time_max)
+        event_list = [
+            {
+                "event_id": e["id"],
+                "title": e.get("summary", "(No Title)"),
+                "start_time": e["start"].get("dateTime", e["start"].get("date", "")),
+                "end_time": e["end"].get("dateTime", e["end"].get("date", "")),
+            }
+            for e in events
+        ]
+        event_list_str = json.dumps(event_list, indent=2)
+        system_prompt = f"""
+            You are an assistant that helps users delete calendar events. Here is a list of upcoming events:
+
+            {event_list_str}
+
+            The user wants to delete an event. Match the user's request to the most likely event from the list above.
+            Reply ONLY with a valid JSON object, and nothing else. Do NOT include any natural language, explanations, or code block markers. Example:
+            ```json
+            {{
+            "event_id": "abc123",
+            "confirmation_message": "Are you sure you want to delete 'Meeting with Rico' on 2024-07-18 at 2:00pm?"
+            }}
+            ```
+            If you cannot find a matching event, reply with:
+            ```json
+            {{
+            "event_id": null,
+            "confirmation_message": "I couldn't find a matching event. Please specify the event you want to delete."
+            }}
+            ```
+            """
+        print("LLM system prompt for delete_event:\n", system_prompt)
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "user", "content": user_prompt},
+            {"role": "assistant", "content": f"Here are the user's events for context (event_id, title, start_time, end_time):\n{json.dumps(event_list, indent=2)}"}
         ]
         if pending_changes:
             messages.append({
@@ -205,11 +295,18 @@ class ScheduleIntentHandler:
                 "content": f"Current known details (JSON): {json.dumps(pending_changes)}"
             })
         response = self.openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",
             messages=messages,
             temperature=0.4
         )
         content = response.choices[0].message.content.strip()
+        import re
+        # Remove code block markers if present
+        if content.startswith("```"):
+            content = re.sub(r"^```[a-zA-Z]*\n?", "", content)
+            content = re.sub(r"\n?```$", "", content)
+        content = content.strip()
+        print("LLM raw response for delete event:", content)
         try:
             data = json.loads(content)
             data["type"] = "schedule_delete"
@@ -233,7 +330,7 @@ class ScheduleIntentHandler:
         '''
         user_prompt = f"User message: {message}"
         response = self.openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -284,7 +381,7 @@ class ScheduleIntentHandler:
             {json.dumps(event_summaries, indent=2)}
             """
             summary_response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4",
                 messages=[
                     {"role": "system", "content": "You are an assistant that summarizes calendar events for users."},
                     {"role": "user", "content": summary_prompt}

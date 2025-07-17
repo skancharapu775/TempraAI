@@ -98,7 +98,7 @@ async def classify_intent_for_message(client, message: str, conversation_history
     print(f"DEBUG: Classifying intent for message: '{message}'")
     print(f"DEBUG: Messages sent to LLM: {messages}")
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4",
         messages=messages,
         max_tokens=20,
         temperature=0.1
@@ -225,7 +225,7 @@ async def handle_remind_intent(client, message: str, pending_changes: dict = Non
         })
 
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4",
         messages=messages,
         temperature=0.4
     )
@@ -276,7 +276,7 @@ async def handle_general_chat(client, message: str, conversation_history: List[d
     messages.append({"role": "user", "content": message})
     
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4",
         messages=messages,
         max_tokens=300,
         temperature=0.7
@@ -444,6 +444,7 @@ async def handle_change_action(request: ChangeActionRequest):
                 body = request.change_details.get("body", "")
                 attachments = request.change_details.get("attachments", [])
                 folder = request.change_details.get("folder", "")
+                action = request.change_details.get("action", "draft")  # Default to draft
                 email_handler = create_email_handler(
                     provider="gmail",
                     access_token=credentials.token,
@@ -451,10 +452,40 @@ async def handle_change_action(request: ChangeActionRequest):
                     client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
                     client_secret="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"
                 )
-                recipient_info = f" to {recipient}" if recipient else ""
-                attachment_info = f" with {len(attachments)} attachment(s)" if attachments else ""
-                folder_info = f" in folder '{folder}'" if folder else ""
-                message = f"Perfect! I've successfully created an email draft with subject '{subject}'{recipient_info}{folder_info}{attachment_info}. The email has been saved as a draft. Is there anything else I can help you with?"
+                
+                try:
+                    if action == "send":
+                        # Send email immediately
+                        message_id = await email_handler.send_email_immediately(
+                            subject=subject,
+                            recipient=recipient,
+                            body=body,
+                            attachments=attachments
+                        )
+                        
+                        recipient_info = f" to {recipient}" if recipient else ""
+                        attachment_info = f" with {len(attachments)} attachment(s)" if attachments else ""
+                        message = f"Perfect! I've successfully sent an email with subject '{subject}'{recipient_info}{attachment_info}. The email has been sent (ID: {message_id}). Is there anything else I can help you with?"
+                    else:
+                        # Create draft (default behavior)
+                        draft_id = await email_handler.create_gmail_draft(
+                            subject=subject,
+                            recipient=recipient,
+                            body=body,
+                            attachments=attachments
+                        )
+                        
+                        # If a folder is specified, move the draft to that folder
+                        if folder:
+                            await email_handler.move_emails_to_folder([draft_id], folder)
+                        
+                        recipient_info = f" to {recipient}" if recipient else ""
+                        attachment_info = f" with {len(attachments)} attachment(s)" if attachments else ""
+                        folder_info = f" in folder '{folder}'" if folder else ""
+                        message = f"Perfect! I've successfully created an email draft with subject '{subject}'{recipient_info}{folder_info}{attachment_info}. The email has been saved as a draft (ID: {draft_id}). Is there anything else I can help you with?"
+                except Exception as e:
+                    message = f"Sorry, I couldn't process the email: {str(e)}. Please try again."
+                
                 return ChangeActionResponse(
                     success=True,
                     message=message,
@@ -464,6 +495,7 @@ async def handle_change_action(request: ChangeActionRequest):
                 # Handle scheduling an email to be sent later
                 subject = request.change_details.get("subject", "Email")
                 recipient = request.change_details.get("recipient", "recipient")
+                body = request.change_details.get("body", "")
                 folder = request.change_details.get("folder", "")
                 scheduled_time = request.change_details.get("scheduled_time", "")
                 email_handler = create_email_handler(
@@ -473,10 +505,31 @@ async def handle_change_action(request: ChangeActionRequest):
                     client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
                     client_secret="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"
                 )
-                recipient_info = f" to {recipient}" if recipient else ""
-                folder_info = f" in folder '{folder}'" if folder else ""
-                schedule_info = f" (scheduled for {scheduled_time})" if scheduled_time else ""
-                message = f"Perfect! I've scheduled an email with subject '{subject}'{recipient_info}{folder_info}{schedule_info}. Is there anything else I can help you with?"
+                
+                try:
+                    # Create a draft with scheduling information in the body
+                    scheduled_body = body
+                    if scheduled_time:
+                        scheduled_body += f"\n\n---\nThis email is scheduled to be sent on: {scheduled_time}\n---"
+                    
+                    # Actually create the draft using Gmail API
+                    draft_id = await email_handler.create_gmail_draft(
+                        subject=subject,
+                        recipient=recipient,
+                        body=scheduled_body
+                    )
+                    
+                    # If a folder is specified, move the draft to that folder
+                    if folder:
+                        await email_handler.move_emails_to_folder([draft_id], folder)
+                    
+                    recipient_info = f" to {recipient}" if recipient else ""
+                    folder_info = f" in folder '{folder}'" if folder else ""
+                    schedule_info = f" (scheduled for {scheduled_time})" if scheduled_time else ""
+                    message = f"Perfect! I've scheduled an email with subject '{subject}'{recipient_info}{folder_info}{schedule_info}. The draft has been created (ID: {draft_id}). Is there anything else I can help you with?"
+                except Exception as e:
+                    message = f"Sorry, I couldn't schedule the email: {str(e)}. Please try again."
+                
                 return ChangeActionResponse(
                     success=True,
                     message=message,
@@ -495,19 +548,45 @@ async def handle_change_action(request: ChangeActionRequest):
                     client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
                     client_secret="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"
                 )
-                created_folder_names = []
-                if created_folders:
-                    for folder_name in created_folders:
-                        try:
-                            folder_id = await email_handler.email_service.create_folder(folder_name)
-                            created_folder_names.append(folder_name)
-                        except Exception as e:
-                            print(f"Error creating folder {folder_name}: {e}")
-                folder_info = ""
-                if created_folder_names:
-                    folder_info = f"Created folders: {', '.join(created_folder_names)}. "
-                folder_info += f"Using existing folders: {', '.join(existing_folders)}"
-                message = f"Perfect! I've successfully organized your emails based on '{criteria}'. {folder_info}. Approximately {email_count} emails were processed. Is there anything else I can help you with?"
+                
+                try:
+                    created_folder_names = []
+                    if created_folders:
+                        for folder_name in created_folders:
+                            try:
+                                folder_id = await email_handler.create_folder(folder_name)
+                                if folder_id:
+                                    created_folder_names.append(folder_name)
+                            except Exception as e:
+                                print(f"Error creating folder {folder_name}: {e}")
+                    
+                    # Get recent emails to organize (simplified - in practice you'd use more sophisticated logic)
+                    recent_emails = await email_handler.get_recent_emails(limit=email_count)
+                    organized_count = 0
+                    
+                    # Simple organization logic - move emails to appropriate folders
+                    for email in recent_emails:
+                        email_id = email.get('id')
+                        subject = email.get('subject', '').lower()
+                        
+                        # Simple keyword-based organization
+                        if any(word in subject for word in ['work', 'project', 'meeting', 'business']):
+                            if 'Work' in created_folder_names or 'Work' in existing_folders:
+                                await email_handler.move_emails_to_folder([email_id], 'Work')
+                                organized_count += 1
+                        elif any(word in subject for word in ['personal', 'family', 'friend']):
+                            if 'Personal' in created_folder_names or 'Personal' in existing_folders:
+                                await email_handler.move_emails_to_folder([email_id], 'Personal')
+                                organized_count += 1
+                    
+                    folder_info = ""
+                    if created_folder_names:
+                        folder_info = f"Created folders: {', '.join(created_folder_names)}. "
+                    folder_info += f"Using existing folders: {', '.join(existing_folders)}"
+                    message = f"Perfect! I've successfully organized your emails based on '{criteria}'. {folder_info}. Organized {organized_count} out of {len(recent_emails)} emails. Is there anything else I can help you with?"
+                except Exception as e:
+                    message = f"Sorry, I couldn't organize your emails: {str(e)}. Please try again."
+                
                 return ChangeActionResponse(
                     success=True,
                     message=message,
