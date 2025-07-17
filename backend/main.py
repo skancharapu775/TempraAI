@@ -5,7 +5,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from typing import Optional, List
 from auth import router as auth_router
-from emails import app as email_router
+
 from format import *
 from emails import create_email_handler
 import json
@@ -16,6 +16,8 @@ from datetime import datetime, date
 import tzlocal
 from scheduling import create_schedule_handler
 from todo import create_todo_handler
+from todo import router as todo_router
+from email_endpoints import app as email_router
 from goals import create_goals_handler
 from firebase import db
 
@@ -29,6 +31,7 @@ app.add_middleware(
 )
 app.include_router(auth_router, prefix="/auth")
 app.include_router(email_router, prefix="/email")
+app.include_router(todo_router, prefix="/todo")
 
 class ProcessMessageRequest(BaseModel):
     message: str

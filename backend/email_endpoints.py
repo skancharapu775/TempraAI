@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Cookie, Header, 
 from fastapi.responses import RedirectResponse
 import yagmail
 
-app = APIRouter
+app = APIRouter()
 
 @app.post("/send-email-reminder")
 async def send_email_reminder(data: dict = Body(...)):

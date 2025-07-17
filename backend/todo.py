@@ -2,6 +2,34 @@ import re
 from openai import OpenAI
 import os
 
+from fastapi import APIRouter
+from google.cloud import firestore
+from pydantic import BaseModel
+from typing import List
+from firebase import db
+
+router = APIRouter()
+
+class TodoItem(BaseModel):
+    id: str
+    title: str
+    completed: bool
+
+@router.get("/get-todos", response_model=List[TodoItem])
+def get_todos():
+    todos_ref = db.collection("reminders")
+    docs = todos_ref.stream()
+    
+    result = []
+    for doc in docs:
+        data = doc.to_dict()
+        result.append(TodoItem(
+            id=doc.id,
+            title=data.get("title", ""),
+            completed=data.get("completed", False)
+        ))
+    return result
+
 class TodoHandler:
     def __init__(self):
         self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))

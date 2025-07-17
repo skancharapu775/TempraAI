@@ -7,6 +7,7 @@ import Chatbox from './components/Chatbox.jsx'
 import Navbar from './components/Navbar.jsx'
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import LoginPage from './pages/LoginPage.jsx';
+import TodoPage from './pages/TodoPage.jsx';
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -16,6 +17,7 @@ createRoot(document.getElementById('root')).render(
           <Route path="/" element={<App />}>
             <Route index element={<Chatbox />} />
             <Route path="login" element={<LoginPage />} />
+            <Route path="todo" element={<TodoPage />} />
           </Route>
         </Routes>
       </BrowserRouter>
