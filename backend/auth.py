@@ -97,6 +97,7 @@ def get_user(
         token = session_token
     if not token:
         raise HTTPException(status_code=401, detail="No session token provided")
+        return None
     try:
         payload = jwt.decode(token, SECRET, algorithms=[ALGORITHM])
         return {"email": payload["sub"]}

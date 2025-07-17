@@ -5,6 +5,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from typing import Optional, List
 from auth import router as auth_router
+from emails import app as email_router
 from format import *
 from emails import create_email_handler
 import json
@@ -16,6 +17,7 @@ import tzlocal
 from scheduling import create_schedule_handler
 from todo import create_todo_handler
 from goals import create_goals_handler
+from firebase import db
 
 app = FastAPI(title="TempraAI API", version="1.0.0")
 app.add_middleware(
@@ -26,6 +28,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth_router, prefix="/auth")
+app.include_router(email_router, prefix="/email")
 
 class ProcessMessageRequest(BaseModel):
     message: str
@@ -180,7 +183,8 @@ async def handle_email_intent(client, message: str, pending_changes: dict = None
 
 async def handle_remind_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
     """Handle reminder intent and return (reply, pending_changes, show_accept_deny)"""
-    system_prompt = """
+    system_prompt = f"""
+        Today is {datetime.now()}
         You are an assistant that extracts reminder details from the user's inputs. Your job is to guess title, description, due_date, due_time, priority, category, and recurrence pattern from natural text.
 
         REQUIRED FIELDS: title, due_date, due_time, recurrence
@@ -198,7 +202,7 @@ async def handle_remind_intent(client, message: str, pending_changes: dict = Non
         - "custom": Custom pattern (specify in description)
 
         Reply *only* with valid JSON. Example:
-        {
+        
         "title": "...",
         "description": "...",   // optional
         "due_date": "...",      // date in YYYY-MM-DD format
@@ -208,7 +212,7 @@ async def handle_remind_intent(client, message: str, pending_changes: dict = Non
         "recurrence": "...",    // optional: "once", "daily", "weekly", "monthly", "yearly", "every_other_day", "weekdays", "weekends", "custom"
         "missing_fields": ["title", ...], // only include required fields that are missing
         "confirmation_message": "..."
-        }
+        
 
         If there are any current known details, merge them with the JSON that you will return.
         """
@@ -625,6 +629,18 @@ async def handle_change_action(request: ChangeActionRequest):
             
             message = f"Perfect! I've successfully created a reminder '{title}'{time_info}{recurrence_info}{priority_info}{category_info}. Is there anything else I can help you with?"
             
+            # TODO : ADD DB Integration here. 
+            db.collection("reminders").document(request.email).set({
+                "title": title,
+                "description": description,
+                "due_date": due_date,
+                "due_time": due_time,
+                "priority": priority,
+                "category": category,
+                "recurrence": recurrence,
+                "created_at": datetime.now().isoformat()
+            })
+
             return ChangeActionResponse(
                 success=True,
                 message=message,

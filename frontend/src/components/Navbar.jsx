@@ -13,13 +13,15 @@ function Navbar() {
         });
         if (!res.ok) throw new Error("Not logged in");
         const data = await res.json();
+        if (!data) {
+          setIsLoggedIn(false);
+        } else {
+          setIsLoggedIn(true);
+        }
         setEmail(data.email);
       } catch (err) {
         setEmail(null);
-      } finally {
-        setLoading(false);
-        setIsLoggedIn(true);
-      }
+      } 
     };
 
     useEffect(() => {
