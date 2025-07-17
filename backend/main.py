@@ -74,13 +74,14 @@ def create_openai_client():
 async def classify_intent_for_message(client, message: str, conversation_history: List[dict] = None) -> str:
     """Classify the intent of a user message"""
     role = '''
-        You are an expert intent classifier for a smart assistant. Classify the user's intent into one of these categories: "Schedule", "Remind", "Email", "Todo", "Goal", "General".
+        You are an expert intent classifier for a smart assistant. Classify the user's intent into one of these categories: "Schedule", "Remind", "Email", "Todo", "Goal", "MultiStep", "General".
         
         - "Schedule": User wants to schedule, book, or plan a meeting, appointment, or event (e.g., "Set up a meeting for Friday at 2pm", "Book a dentist appointment next week").
         - "Remind": User wants to set a reminder or create a todo (e.g., "Remind me to call mom tomorrow", "Add 'buy milk' to my reminders").
         - "Email": User wants to send, draft, organize, or search for an email (e.g., "Send an email to John", "Show me my unread emails").
         - "Todo": User wants to add, remove, or check off an item from a todo list (e.g., "Add 'finish report' to my todo list", "Remove 'call plumber' from my todos").
         - "Goal": User wants to set, plan, break down, or create a step-by-step plan for a goal (e.g., "Help me train for a marathon", "Create a plan to learn Spanish in 3 months").
+        - "MultiStep": User wants to perform a complex, multi-step task that involves chaining multiple actions or tools (e.g., "Extract events from this screenshot, search my emails for related info, and add a note", "Find all emails from John, summarize them, and schedule a follow-up meeting").
         - "General": General conversation, questions, or other topics (e.g., "How's the weather?", "Tell me a joke").
         
         Examples:
@@ -89,6 +90,7 @@ async def classify_intent_for_message(client, message: str, conversation_history
         User: "Send an email to my boss about the project update" -> Email
         User: "Add 'read a book' to my todo list" -> Todo
         User: "Help me create a 4-week workout plan" -> Goal
+        User: "Extract events from this screenshot, search my emails for related info, and add a note" -> MultiStep
         User: "What's the capital of France?" -> General
         
         Carefully read the user's message and context. Return ONLY ONE WORD from the choices above, with no punctuation or explanation.
@@ -355,6 +357,11 @@ async def process_message(request: ProcessMessageRequest = Body(...)):
         reply, pending_changes, show_accept_deny = await handle_goal_intent(
             client, request.message, request.pending_changes
         )
+    elif intent == "MultiStep":
+        # Placeholder for MultiStep intent handler
+        reply = "This is a multi-step action. Multi-step agent logic will be handled here."
+        pending_changes = None
+        show_accept_deny = False
     else:
         # Default to general chat for unhandled intents
         reply = await handle_general_chat(

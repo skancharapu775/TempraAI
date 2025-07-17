@@ -1,5 +1,8 @@
 import json
 from typing import Any, Callable, Dict, Tuple, List
+from emails import create_email_handler
+import requests
+import os
 
 """
 Advanced tool-calling agent for multi-step, adaptive LLM workflows.
@@ -36,6 +39,89 @@ async def add_todo(title: str, due_date: str = None, **kwargs):
         msg += f" (due {due_date})"
     return f"Added todo: {msg}"
 
+
+async def search_email(query: str, limit: int = 10, access_token: str = None, refresh_token: str = None, **kwargs):
+    """Search emails using Gmail API"""
+    try:
+        # Create email handler with provided credentials
+        email_handler = create_email_handler(
+            provider="gmail",
+            access_token=access_token,
+            refresh_token=refresh_token,
+            client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
+            client_secret="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"
+        )
+        
+        # Search emails
+        results = await email_handler.search_emails_by_query(query, limit)
+        
+        if not results:
+            return f"No emails found for query: '{query}'"
+        
+        # Format results
+        formatted_results = []
+        for i, email in enumerate(results, 1):
+            formatted_results.append(f"{i}. Subject: {email.get('subject', 'No subject')}")
+            formatted_results.append(f"   From: {email.get('from', 'Unknown')}")
+            formatted_results.append(f"   Date: {email.get('date', 'Unknown')}")
+            formatted_results.append(f"   Snippet: {email.get('snippet', '')[:100]}...")
+            formatted_results.append("")
+        
+        return f"Found {len(results)} emails for '{query}':\n\n" + "\n".join(formatted_results)
+        
+    except Exception as e:
+        return f"Error searching emails: {str(e)}"
+
+async def search_google(query: str, num_results: int = 5, **kwargs):
+    """Search Google using a web search API"""
+    try:
+        # DuckDuckGo Instant Answer API (free, no API key)
+        url = "https://api.duckduckgo.com/"
+        params = {
+            'q': query,
+            'format': 'json',
+            'no_html': '1',
+            'skip_disambig': '1'
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        results = []
+        
+        # Get instant answer if available
+        if data.get('Abstract'):
+            results.append(f"📖 **Instant Answer:** {data['Abstract']}")
+            if data.get('AbstractURL'):
+                results.append(f"Source: {data['AbstractURL']}")
+            results.append("")
+        
+        # Get related topics
+        if data.get('RelatedTopics'):
+            results.append("🔍 **Related Information:**")
+            for i, topic in enumerate(data['RelatedTopics'][:num_results], 1):
+                if isinstance(topic, dict) and topic.get('Text'):
+                    results.append(f"{i}. {topic['Text'][:200]}...")
+                elif isinstance(topic, str):
+                    results.append(f"{i}. {topic[:200]}...")
+            results.append("")
+        
+        # If no results from DuckDuckGo, provide a fallback
+        if not results:
+            results.append(f"🔍 **Search Results for '{query}':**")
+            results.append("No specific results found. Consider:")
+            results.append("• Refining your search terms")
+            results.append("• Using more specific keywords")
+            results.append("• Checking spelling")
+        
+        return "\n".join(results)
+        
+    except requests.RequestException as e:
+        return f"Error performing web search: Network error - {str(e)}"
+    except Exception as e:
+        return f"Error performing web search: {str(e)}"
+
 # --- Tool-Calling Agent ---
 
 async def tool_calling_agent(
@@ -66,7 +152,7 @@ async def tool_calling_agent(
             "You may call one tool at a time, and after each call you will see the result. "
             "Continue until the user's request is fully handled. "
             "If you are done, reply with a final message to the user. "
-            "If you need clarification, ask the user."
+            "If you need more clarification, ask the user."
         )
     
     # Compose tool descriptions for the LLM
@@ -144,5 +230,17 @@ todo_tool = Tool(
     func=add_todo
 )
 
+search_email_tool = Tool(
+    name="search_email",
+    description="Search emails using a query string. Requires access_token and refresh_token for Gmail authentication.",
+    func=search_email
+)
+
+search_google_tool = Tool(
+    name="search_google",
+    description="Search the web using Google/DuckDuckGo. Provide a search query and optionally specify number of results (default 5).",
+    func=search_google
+)
+
 # Example tools list for agent usage:
-tools = [reminder_tool, todo_tool] 
+tools = [reminder_tool, todo_tool, search_email_tool, search_google_tool] 

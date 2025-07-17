@@ -710,7 +710,28 @@ class EmailIntentHandler:
                 q=query
             ).execute()
             
-            return await self.get_gmail_recent_emails(limit)
+            messages = results.get('messages', [])
+            emails = []
+            
+            for msg in messages:
+                msg_detail = self.email_service.client.users().messages().get(
+                    userId='me', id=msg['id'], format='metadata'
+                ).execute()
+                
+                headers = msg_detail['payload']['headers']
+                subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'No subject')
+                sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown')
+                date = next((h['value'] for h in headers if h['name'] == 'Date'), 'Unknown')
+                
+                emails.append({
+                    'id': msg['id'],
+                    'subject': subject,
+                    'from': sender,
+                    'date': date,
+                    'snippet': msg_detail.get('snippet', '')
+                })
+            
+            return emails
         except Exception as e:
             print(f"Error searching Gmail emails: {e}")
             return []
