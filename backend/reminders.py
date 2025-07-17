@@ -6,8 +6,8 @@ import datetime
 def schedule_email_reminder(email, title, due_datetime, description):
     client = tasks_v2.CloudTasksClient()
     
-    project = "tempraai"
-    queue = "your-queue-id"
+    project = "tempraai-67830"
+    queue = "ReminderEmails"
     location = "us-central1"
     url = "http://localhost:5173/emails/send-email-reminder"  # Make public or secure with token
 
