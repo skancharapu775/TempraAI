@@ -1,6 +1,7 @@
 import json
 from typing import Any, Callable, Dict, Tuple, List
 from emails import create_email_handler
+from scheduling import create_schedule_handler
 import requests
 import os
 
@@ -10,17 +11,18 @@ The LLM is given a list of tools and can call them one at a time, receiving the 
 """
 
 class Tool:
-    def __init__(self, name: str, description: str, func: Callable):
+    def __init__(self, name: str, description: str, func: Callable, parameters: dict = None):
         self.name = name
         self.description = description
         self.func = func
+        self.parameters = parameters or {"type": "object", "properties": {}}
 
     def to_openai_function(self):
         # For OpenAI function calling schema
         return {
             "name": self.name,
             "description": self.description,
-            "parameters": {"type": "object", "properties": {}},  # You can expand this for strict schemas
+            "parameters": self.parameters,
         }
 
 # --- Basic Example Tool Functions ---
@@ -38,7 +40,6 @@ async def add_todo(title: str, due_date: str = None, **kwargs):
     if due_date:
         msg += f" (due {due_date})"
     return f"Added todo: {msg}"
-
 
 async def search_email(query: str, limit: int = 10, access_token: str = None, refresh_token: str = None, **kwargs):
     """Search emails using Gmail API"""
@@ -121,6 +122,63 @@ async def search_google(query: str, num_results: int = 5, **kwargs):
         return f"Error performing web search: Network error - {str(e)}"
     except Exception as e:
         return f"Error performing web search: {str(e)}"
+
+async def search_calendar(query: str, access_token: str = None, refresh_token: str = None, **kwargs):
+    """Search Google Calendar for events matching a query string."""
+    try:
+        schedule_handler = create_schedule_handler(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
+            client_secret="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"
+        )
+        # Use the handler's service to list events
+        events_result = schedule_handler.schedule_service.client.events().list(
+            calendarId='primary',
+            q=query,
+            maxResults=10,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        events = events_result.get('items', [])
+        if not events:
+            return f"No calendar events found for query: '{query}'"
+        formatted = []
+        for i, event in enumerate(events, 1):
+            summary = event.get('summary', 'No title')
+            start = event.get('start', {}).get('dateTime', event.get('start', {}).get('date', ''))
+            end = event.get('end', {}).get('dateTime', event.get('end', {}).get('date', ''))
+            formatted.append(f"{i}. {summary}\n   Start: {start}\n   End: {end}")
+        return f"Found {len(events)} calendar events for '{query}':\n\n" + "\n\n".join(formatted)
+    except Exception as e:
+        return f"Error searching calendar: {str(e)}"
+
+async def add_calendar_event(title: str, start_time: str, end_time: str, access_token: str = None, refresh_token: str = None, attendees: list = None, **kwargs):
+    """Add a new event to Google Calendar."""
+    try:
+        schedule_handler = create_schedule_handler(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
+            client_secret="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"
+        )
+        event = {
+            'summary': title,
+            'start': {
+                'dateTime': start_time,
+                'timeZone': 'America/New_York',
+            },
+            'end': {
+                'dateTime': end_time,
+                'timeZone': 'America/New_York',
+            },
+        }
+        if attendees:
+            event['attendees'] = [{'email': email} for email in attendees]
+        created_event = schedule_handler.schedule_service.client.events().insert(calendarId='primary', body=event).execute()
+        return f"Event '{title}' added to calendar from {start_time} to {end_time}. Link: {created_event.get('htmlLink', 'N/A')}"
+    except Exception as e:
+        return f"Error adding calendar event: {str(e)}"
 
 # --- Tool-Calling Agent ---
 
@@ -221,26 +279,94 @@ async def tool_calling_agent(
 reminder_tool = Tool(
     name="add_reminder",
     description="Add a reminder with a title, due date (YYYY-MM-DD), and due time (HH:MM).",
-    func=add_reminder
+    func=add_reminder,
+    parameters={
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "The title of the reminder"},
+            "due_date": {"type": "string", "description": "Due date in YYYY-MM-DD format (optional)"},
+            "due_time": {"type": "string", "description": "Due time in HH:MM format (optional)"}
+        },
+        "required": ["title"]
+    }
 )
 
 todo_tool = Tool(
     name="add_todo",
     description="Add a todo item with a title and optional due date (YYYY-MM-DD).",
-    func=add_todo
+    func=add_todo,
+    parameters={
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "The title of the todo item"},
+            "due_date": {"type": "string", "description": "Due date in YYYY-MM-DD format (optional)"}
+        },
+        "required": ["title"]
+    }
 )
 
 search_email_tool = Tool(
     name="search_email",
     description="Search emails using a query string. Requires access_token and refresh_token for Gmail authentication.",
-    func=search_email
+    func=search_email,
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query for emails"},
+            "limit": {"type": "integer", "description": "Maximum number of results (default 10)"},
+            "access_token": {"type": "string", "description": "Gmail access token"},
+            "refresh_token": {"type": "string", "description": "Gmail refresh token"}
+        },
+        "required": ["query", "access_token", "refresh_token"]
+    }
 )
 
 search_google_tool = Tool(
     name="search_google",
     description="Search the web using Google/DuckDuckGo. Provide a search query and optionally specify number of results (default 5).",
-    func=search_google
+    func=search_google,
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query for web search"},
+            "num_results": {"type": "integer", "description": "Number of results to return (default 5)"}
+        },
+        "required": ["query"]
+    }
+)
+
+search_calendar_tool = Tool(
+    name="search_calendar",
+    description="Search Google Calendar for events matching a query string. Requires access_token and refresh_token.",
+    func=search_calendar,
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query for calendar events"},
+            "access_token": {"type": "string", "description": "Google Calendar access token"},
+            "refresh_token": {"type": "string", "description": "Google Calendar refresh token"}
+        },
+        "required": ["query", "access_token", "refresh_token"]
+    }
+)
+
+add_calendar_event_tool = Tool(
+    name="add_calendar_event",
+    description="Add a new event to Google Calendar. Requires title, start_time (ISO 8601), end_time (ISO 8601), and optionally attendees. Requires access_token and refresh_token.",
+    func=add_calendar_event,
+    parameters={
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "Event title"},
+            "start_time": {"type": "string", "description": "Start time in ISO 8601 format (e.g., 2024-06-10T10:00:00-04:00)"},
+            "end_time": {"type": "string", "description": "End time in ISO 8601 format (e.g., 2024-06-10T11:00:00-04:00)"},
+            "attendees": {"type": "array", "items": {"type": "string"}, "description": "List of attendee email addresses (optional)"},
+            "access_token": {"type": "string", "description": "Google Calendar access token"},
+            "refresh_token": {"type": "string", "description": "Google Calendar refresh token"}
+        },
+        "required": ["title", "start_time", "end_time", "access_token", "refresh_token"]
+    }
 )
 
 # Example tools list for agent usage:
-tools = [reminder_tool, todo_tool, search_email_tool, search_google_tool] 
+tools = [reminder_tool, todo_tool, search_email_tool, search_google_tool, search_calendar_tool, add_calendar_event_tool] 
