@@ -584,10 +584,11 @@ async def handle_change_action(request: ChangeActionRequest):
                         
                         # Use LLM to categorize the email
                         try:
-                            # Get available folders - exclude Archive since user wants Work/Personal organization
-                            available_folders = created_folder_names + [f for f in existing_folders if f != 'Archive']
+                            # Strictly use only user-specified categories
+                            available_folders = created_folder_names + existing_folders
                             if not available_folders:
-                                available_folders = ['Work', 'Personal']  # Default folders
+                                # If user didn't specify, fallback to a safe default
+                                available_folders = ['General']
                             
                             # Create prompt for LLM categorization
                             categorization_prompt = f"""
@@ -600,12 +601,8 @@ async def handle_change_action(request: ChangeActionRequest):
                             From: {sender}
                             Snippet: {snippet}
 
-                            Rules:
-                            - Work: Business, professional, meetings, projects, clients, work-related, LinkedIn, job-related, appointments, consultations, Firebase, development, technical
-                            - Personal: Family, friends, personal life, social, non-work, personal subscriptions, newsletters, shopping, travel, entertainment, personal finance, health appointments, social media
-
                             IMPORTANT: Only return one of these exact folder names: {', '.join(available_folders)}
-                            When in doubt, categorize as Personal.
+                            If you are unsure, make the best choice based on the email content.
 
                             Return only the folder name:
                             """
@@ -627,21 +624,22 @@ async def handle_change_action(request: ChangeActionRequest):
                                 organized_count += 1
                                 print(f"DEBUG: Moved to {category} folder")
                             else:
-                                # If LLM returned an invalid category, default to Personal
-                                default_folder = 'Personal' if 'Personal' in available_folders else available_folders[0]
+                                # Strict fallback: always use the first user-specified category
+                                default_folder = available_folders[0]
                                 await email_handler.move_emails_to_folder([email_id], default_folder)
                                 organized_count += 1
-                                print(f"DEBUG: Moved to {default_folder} folder (default) - LLM returned invalid category: {category}")
-                                
+                                print(f"DEBUG: Moved to {default_folder} folder (strict fallback) - LLM returned invalid category: {category}")
                         except Exception as e:
                             print(f"DEBUG: Error categorizing email: {e}")
-                            # Fallback to default folder
+                            # Strict fallback: always use the first user-specified category
                             try:
-                                available_folders = created_folder_names + [f for f in existing_folders if f != 'Archive']
-                                default_folder = 'Personal' if 'Personal' in available_folders else available_folders[0]
+                                available_folders = created_folder_names + existing_folders
+                                if not available_folders:
+                                    available_folders = ['General']
+                                default_folder = available_folders[0]
                                 await email_handler.move_emails_to_folder([email_id], default_folder)
                                 organized_count += 1
-                                print(f"DEBUG: Moved to {default_folder} folder (fallback)")
+                                print(f"DEBUG: Moved to {default_folder} folder (strict fallback)")
                             except Exception as fallback_error:
                                 print(f"DEBUG: Failed to move email: {fallback_error}")
                     
