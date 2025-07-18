@@ -20,6 +20,7 @@ from todo import router as todo_router
 from email_endpoints import app as email_router
 from goals import create_goals_handler
 from firebase import db
+from multistep import tool_calling_agent, tools as multistep_tools
 
 app = FastAPI(title="TempraAI API", version="1.0.0")
 app.add_middleware(
@@ -74,13 +75,13 @@ def create_openai_client():
 async def classify_intent_for_message(client, message: str, conversation_history: List[dict] = None) -> str:
     """Classify the intent of a user message"""
     role = '''
-        You are an expert intent classifier for a smart assistant. Classify the user's intent into one of these categories: "Schedule", "Remind", "Email", "Todo", "Goal", "General".
+        You are an expert intent classifier for a smart assistant. Classify the user's intent into one of these categories: "Schedule", "Remind", "Email", "Todo", "Multistep", "General".
         
         - "Schedule": User wants to schedule, book, or plan a meeting, appointment, or event (e.g., "Set up a meeting for Friday at 2pm", "Book a dentist appointment next week").
         - "Remind": User wants to set a reminder or create a todo (e.g., "Remind me to call mom tomorrow", "Add 'buy milk' to my reminders").
         - "Email": User wants to send, draft, organize, or search for an email (e.g., "Send an email to John", "Show me my unread emails").
         - "Todo": User wants to add, remove, or check off an item from a todo list (e.g., "Add 'finish report' to my todo list", "Remove 'call plumber' from my todos").
-        - "Goal": User wants to set, plan, break down, or create a step-by-step plan for a goal (e.g., "Help me train for a marathon", "Create a plan to learn Spanish in 3 months").
+        - "Multistep": User wants to perform a multi-step or multi-tool workflow, a request with a single event multiple times, or requests a sequence of actions that span multiple intents (e.g., "Find all emails from John and add a reminder to reply to each one", "Search my calendar for meetings tomorrow and email me a summary").
         - "General": General conversation, questions, or other topics (e.g., "How's the weather?", "Tell me a joke").
         
         Examples:
@@ -88,7 +89,8 @@ async def classify_intent_for_message(client, message: str, conversation_history
         User: "Remind me to water the plants every morning" -> Remind
         User: "Send an email to my boss about the project update" -> Email
         User: "Add 'read a book' to my todo list" -> Todo
-        User: "Help me create a 4-week workout plan" -> Goal
+        User: "Find all emails from John and add a reminder to reply to each one" -> Multistep
+        User: "Search my calendar for meetings tomorrow and email me a summary" -> Multistep
         User: "What's the capital of France?" -> General
         
         Carefully read the user's message and context. Return ONLY ONE WORD from the choices above, with no punctuation or explanation.
@@ -126,7 +128,7 @@ async def check_intent_continuation(client, current_intent: str, message: str, c
         - "Remind": Setting reminders or creating todos
         - "Email": Sending, drafting, or composing emails
         - "Todo": An item to be added, removed, or deleted from the todo list
-        - "Goal": Setting, planning, or breaking down a goal
+        - "Multistep": Multi-step or multi-tool workflows, or requests that span multiple intents (e.g., "Find all emails from John and add a reminder to reply to each one", "Search my calendar for meetings tomorrow and email me a summary")
         - "General": General conversation, questions, or other topics
 
         Rules:
@@ -137,8 +139,8 @@ async def check_intent_continuation(client, current_intent: str, message: str, c
         - If the message is unclear or could go either way, default to EXIT.
 
         Examples:
-        (Current intent: Goal)
-        User: "Make it a 6-week plan instead" -> CONTINUE
+        (Current intent: Reminder)
+        User: "Make it two weeks later instead" -> CONTINUE
         User: "Actually, remind me to call my doctor" -> EXIT
         (Current intent: Schedule)
         User: "Add John as an attendee" -> CONTINUE
@@ -347,6 +349,21 @@ async def process_message(request: ProcessMessageRequest = Body(...)):
         reply, pending_changes, show_accept_deny = await handle_todo_intent(
             client, request.message, request.pending_changes
         )
+    elif intent == "Multistep":
+        # Agentic multi-tool workflow
+        creds = get_google_creds(request.email)
+        # Pass credentials as kwargs for tools that need them
+        agent_reply, agent_data, _ = await tool_calling_agent(
+            client=client,
+            message=request.message,
+            tools=multistep_tools,
+            conversation_history=request.conversation_history,
+            access_token=creds.token,
+            refresh_token=creds.refresh_token
+        )
+        reply = agent_reply
+        pending_changes = agent_data
+        show_accept_deny = False
     elif intent == "General":
         reply = await handle_general_chat(
             client, request.message, request.conversation_history

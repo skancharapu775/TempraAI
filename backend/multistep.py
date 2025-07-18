@@ -206,25 +206,43 @@ async def tool_calling_agent(
     
     if not system_prompt:
         system_prompt = (
-            "You are an advanced assistant with access to the following tools. "
-            "You may call one tool at a time, and after each call you will see the result. "
-            "Continue until the user's request is fully handled. "
-            "If you are done, reply with a final message to the user. "
-            "If you need more clarification, ask the user."
+            """You are an advanced assistant with access to the following tools. 
+You may call one tool at a time, and after each call you will see the result as a JSON block.
+Use the tool result to plan your next step. For example, if you search emails and receive a list of emails, analyze their content and, if you find any todos, call add_todo for each one. 
+If you are done, reply with a final message to the user. 
+If you need more clarification, ask the user. 
+You do NOT need to ask the user for access_token or refresh_token. These will be provided automatically to any tool that needs them.
+If you repeat the same tool call and arguments more than twice, stop and ask the user for clarification.
+
+When you want to use a tool, reply with a JSON object like:
+{"tool": "tool_name", "args": {...}}
+When you are done, reply with:
+{"final": "your final message to the user"}
+If you need more information from the user, reply with:
+{"final": "Could you clarify..."}
+
+Examples:
+User: Read my email and add the todos you can find.
+Assistant: {"tool": "search_email", "args": {"query": "is:unread"}}
+(after seeing the result)
+Assistant: {"tool": "add_todo", "args": {"title": "Follow up with John"}}
+(when done)
+Assistant: {"final": "I've read your emails and added the todos I found to your list."}
+"""
         )
     
     # Compose tool descriptions for the LLM
     tool_list_str = "\n".join([f"- {tool.name}: {tool.description}" for tool in tools])
     
+    # Track repeated tool calls
+    last_tool_call = None
+    repeat_count = 0
     while not done and steps < max_steps:
         steps += 1
         messages = [
             {"role": "system", "content": system_prompt + "\n\nAvailable tools:\n" + tool_list_str}
         ]
         messages.extend(history)
-        if last_tool_result is not None:
-            messages.append({
-                "role": "tool", "content": f"Result of previous tool call: {last_tool_result}"})
         messages.append({"role": "user", "content": message})
         
         # Ask LLM what to do next
@@ -235,43 +253,50 @@ async def tool_calling_agent(
             temperature=0.2
         )
         content = response.choices[0].message.content.strip()
-        # Try to parse tool call from LLM output
+        print(f"[AGENT DEBUG] LLM raw output: {content}")
         try:
-            # Expecting: {"tool": "tool_name", "args": {...}} or {"final": "..."}
             if content.startswith("{"):
                 action = json.loads(content)
             else:
-                # If not JSON, treat as final message
                 action = {"final": content}
         except Exception:
             action = {"final": content}
         
         if "final" in action:
-            # LLM is done, return the final message
             return action["final"], {"steps": steps, "tool_results": tool_results}, False
         elif "tool" in action:
             tool_name = action["tool"]
             args = action.get("args", {})
             tool = tool_map.get(tool_name)
+            # Check for repeated tool calls
+            tool_call_signature = (tool_name, json.dumps(args, sort_keys=True))
+            if tool_call_signature == last_tool_call:
+                repeat_count += 1
+            else:
+                repeat_count = 0
+            last_tool_call = tool_call_signature
+            if repeat_count >= 3:
+                return "I'm stuck repeating the same tool call. Could you clarify your request?", {"steps": steps, "tool_results": tool_results}, False
             if not tool:
                 last_tool_result = f"Unknown tool: {tool_name}"
             else:
                 try:
-                    # Support async tools
-                    if hasattr(tool.func, "__call__") and hasattr(tool.func, "__await__"):
-                        result = await tool.func(**args)
-                    else:
-                        result = tool.func(**args)
+                    for cred_key in ["access_token", "refresh_token"]:
+                        if cred_key in tool.parameters.get("properties", {}) and cred_key not in args and cred_key in kwargs:
+                            args[cred_key] = kwargs[cred_key]
+                    result = await tool.func(**args)
                     last_tool_result = result
                     tool_results[tool_name] = result
                 except Exception as e:
                     last_tool_result = f"Error calling tool {tool_name}: {e}"
+            # Feed tool result as structured JSON
+            try:
+                tool_result_json = json.dumps(last_tool_result) if not isinstance(last_tool_result, str) else last_tool_result
+            except Exception:
+                tool_result_json = str(last_tool_result)
+            history.append({"role": "assistant", "content": f"TOOL RESULT:\n{tool_result_json}"})
         else:
-            # If LLM output is not recognized, treat as final
             return content, {"steps": steps, "tool_results": tool_results}, False
-        # Add LLM output to history for context
-        history.append({"role": "assistant", "content": content})
-    # If max steps reached
     return "Sorry, I couldn't complete your request in time.", {"steps": steps, "tool_results": tool_results}, False
 
 # --- Example Tool Registration ---
@@ -307,15 +332,15 @@ todo_tool = Tool(
 
 search_email_tool = Tool(
     name="search_email",
-    description="Search emails using a query string. Requires access_token and refresh_token for Gmail authentication.",
+    description="Search emails using a query string. Requires access_token and refresh_token for Gmail authentication. You do NOT need to ask the user for these tokens; they will be provided automatically.",
     func=search_email,
     parameters={
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "Search query for emails"},
             "limit": {"type": "integer", "description": "Maximum number of results (default 10)"},
-            "access_token": {"type": "string", "description": "Gmail access token"},
-            "refresh_token": {"type": "string", "description": "Gmail refresh token"}
+            "access_token": {"type": "string", "description": "Gmail access token (provided automatically)"},
+            "refresh_token": {"type": "string", "description": "Gmail refresh token (provided automatically)"}
         },
         "required": ["query", "access_token", "refresh_token"]
     }
@@ -337,14 +362,14 @@ search_google_tool = Tool(
 
 search_calendar_tool = Tool(
     name="search_calendar",
-    description="Search Google Calendar for events matching a query string. Requires access_token and refresh_token.",
+    description="Search Google Calendar for events matching a query string. Requires access_token and refresh_token. You do NOT need to ask the user for these tokens; they will be provided automatically.",
     func=search_calendar,
     parameters={
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "Search query for calendar events"},
-            "access_token": {"type": "string", "description": "Google Calendar access token"},
-            "refresh_token": {"type": "string", "description": "Google Calendar refresh token"}
+            "access_token": {"type": "string", "description": "Google Calendar access token (provided automatically)"},
+            "refresh_token": {"type": "string", "description": "Google Calendar refresh token (provided automatically)"}
         },
         "required": ["query", "access_token", "refresh_token"]
     }
@@ -352,7 +377,7 @@ search_calendar_tool = Tool(
 
 add_calendar_event_tool = Tool(
     name="add_calendar_event",
-    description="Add a new event to Google Calendar. Requires title, start_time (ISO 8601), end_time (ISO 8601), and optionally attendees. Requires access_token and refresh_token.",
+    description="Add a new event to Google Calendar. Requires title, start_time (ISO 8601), end_time (ISO 8601), and optionally attendees. Requires access_token and refresh_token. You do NOT need to ask the user for these tokens; they will be provided automatically.",
     func=add_calendar_event,
     parameters={
         "type": "object",
@@ -361,8 +386,8 @@ add_calendar_event_tool = Tool(
             "start_time": {"type": "string", "description": "Start time in ISO 8601 format (e.g., 2024-06-10T10:00:00-04:00)"},
             "end_time": {"type": "string", "description": "End time in ISO 8601 format (e.g., 2024-06-10T11:00:00-04:00)"},
             "attendees": {"type": "array", "items": {"type": "string"}, "description": "List of attendee email addresses (optional)"},
-            "access_token": {"type": "string", "description": "Google Calendar access token"},
-            "refresh_token": {"type": "string", "description": "Google Calendar refresh token"}
+            "access_token": {"type": "string", "description": "Google Calendar access token (provided automatically)"},
+            "refresh_token": {"type": "string", "description": "Google Calendar refresh token (provided automatically)"}
         },
         "required": ["title", "start_time", "end_time", "access_token", "refresh_token"]
     }
