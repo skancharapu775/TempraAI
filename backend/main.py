@@ -74,14 +74,13 @@ def create_openai_client():
 async def classify_intent_for_message(client, message: str, conversation_history: List[dict] = None) -> str:
     """Classify the intent of a user message"""
     role = '''
-        You are an expert intent classifier for a smart assistant. Classify the user's intent into one of these categories: "Schedule", "Remind", "Email", "Todo", "Goal", "MultiStep", "General".
+        You are an expert intent classifier for a smart assistant. Classify the user's intent into one of these categories: "Schedule", "Remind", "Email", "Todo", "Goal", "General".
         
         - "Schedule": User wants to schedule, book, or plan a meeting, appointment, or event (e.g., "Set up a meeting for Friday at 2pm", "Book a dentist appointment next week").
         - "Remind": User wants to set a reminder or create a todo (e.g., "Remind me to call mom tomorrow", "Add 'buy milk' to my reminders").
         - "Email": User wants to send, draft, organize, or search for an email (e.g., "Send an email to John", "Show me my unread emails").
         - "Todo": User wants to add, remove, or check off an item from a todo list (e.g., "Add 'finish report' to my todo list", "Remove 'call plumber' from my todos").
         - "Goal": User wants to set, plan, break down, or create a step-by-step plan for a goal (e.g., "Help me train for a marathon", "Create a plan to learn Spanish in 3 months").
-        - "MultiStep": User wants to perform a complex, multi-step task that involves chaining multiple actions or tools (e.g., "Extract events from this screenshot, search my emails for related info, and add a note", "Find all emails from John, summarize them, and schedule a follow-up meeting").
         - "General": General conversation, questions, or other topics (e.g., "How's the weather?", "Tell me a joke").
         
         Examples:
@@ -90,7 +89,6 @@ async def classify_intent_for_message(client, message: str, conversation_history
         User: "Send an email to my boss about the project update" -> Email
         User: "Add 'read a book' to my todo list" -> Todo
         User: "Help me create a 4-week workout plan" -> Goal
-        User: "Extract events from this screenshot, search my emails for related info, and add a note" -> MultiStep
         User: "What's the capital of France?" -> General
         
         Carefully read the user's message and context. Return ONLY ONE WORD from the choices above, with no punctuation or explanation.
@@ -357,11 +355,6 @@ async def process_message(request: ProcessMessageRequest = Body(...)):
         reply, pending_changes, show_accept_deny = await handle_goal_intent(
             client, request.message, request.pending_changes
         )
-    elif intent == "MultiStep":
-        # Placeholder for MultiStep intent handler
-        reply = "This is a multi-step action. Multi-step agent logic will be handled here."
-        pending_changes = None
-        show_accept_deny = False
     else:
         # Default to general chat for unhandled intents
         reply = await handle_general_chat(
@@ -554,7 +547,8 @@ async def handle_change_action(request: ChangeActionRequest):
                 created_folders = request.change_details.get("created_folders", [])
                 existing_folders = request.change_details.get("existing_folders", [])
                 criteria = request.change_details.get("criteria", "organize emails")
-                email_count = request.change_details.get("email_count", 25)
+                email_count = request.change_details.get("email_count", 100)  # Increased from 25 to 100
+                print(f"DEBUG: Organization request - email_count: {email_count}")
                 email_handler = create_email_handler(
                     provider="gmail",
                     access_token=credentials.token,
@@ -575,23 +569,81 @@ async def handle_change_action(request: ChangeActionRequest):
                                 print(f"Error creating folder {folder_name}: {e}")
                     
                     # Get recent emails to organize (simplified - in practice you'd use more sophisticated logic)
+                    # Use a broader search to get more emails, not just from INBOX
                     recent_emails = await email_handler.get_recent_emails(limit=email_count)
+                    print(f"DEBUG: Found {len(recent_emails)} emails to organize")
                     organized_count = 0
                     
-                    # Simple organization logic - move emails to appropriate folders
+                    # Enhanced organization logic - use LLM for fuzzy matching
                     for email in recent_emails:
                         email_id = email.get('id')
-                        subject = email.get('subject', '').lower()
+                        subject = email.get('subject', '')
+                        sender = email.get('from', '')
+                        snippet = email.get('snippet', '')
+                        print(f"DEBUG: Processing email: {subject[:50]}...")
                         
-                        # Simple keyword-based organization
-                        if any(word in subject for word in ['work', 'project', 'meeting', 'business']):
-                            if 'Work' in created_folder_names or 'Work' in existing_folders:
-                                await email_handler.move_emails_to_folder([email_id], 'Work')
+                        # Use LLM to categorize the email
+                        try:
+                            # Get available folders - exclude Archive since user wants Work/Personal organization
+                            available_folders = created_folder_names + [f for f in existing_folders if f != 'Archive']
+                            if not available_folders:
+                                available_folders = ['Work', 'Personal']  # Default folders
+                            
+                            # Create prompt for LLM categorization
+                            categorization_prompt = f"""
+                            Categorize this email into one of the available folders. Return ONLY the folder name, nothing else.
+
+                            Available folders: {', '.join(available_folders)}
+
+                            Email details:
+                            Subject: {subject}
+                            From: {sender}
+                            Snippet: {snippet}
+
+                            Rules:
+                            - Work: Business, professional, meetings, projects, clients, work-related, LinkedIn, job-related, appointments, consultations, Firebase, development, technical
+                            - Personal: Family, friends, personal life, social, non-work, personal subscriptions, newsletters, shopping, travel, entertainment, personal finance, health appointments, social media
+
+                            IMPORTANT: Only return one of these exact folder names: {', '.join(available_folders)}
+                            When in doubt, categorize as Personal.
+
+                            Return only the folder name:
+                            """
+                            
+                            # Call LLM for categorization
+                            response = client.chat.completions.create(
+                                model="gpt-3.5-turbo",
+                                messages=[{"role": "user", "content": categorization_prompt}],
+                                max_tokens=10,
+                                temperature=0.1
+                            )
+                            
+                            category = response.choices[0].message.content.strip()
+                            print(f"DEBUG: LLM categorized as: {category}")
+                            
+                            # Move email to the categorized folder
+                            if category in available_folders:
+                                await email_handler.move_emails_to_folder([email_id], category)
                                 organized_count += 1
-                        elif any(word in subject for word in ['personal', 'family', 'friend']):
-                            if 'Personal' in created_folder_names or 'Personal' in existing_folders:
-                                await email_handler.move_emails_to_folder([email_id], 'Personal')
+                                print(f"DEBUG: Moved to {category} folder")
+                            else:
+                                # If LLM returned an invalid category, default to Personal
+                                default_folder = 'Personal' if 'Personal' in available_folders else available_folders[0]
+                                await email_handler.move_emails_to_folder([email_id], default_folder)
                                 organized_count += 1
+                                print(f"DEBUG: Moved to {default_folder} folder (default) - LLM returned invalid category: {category}")
+                                
+                        except Exception as e:
+                            print(f"DEBUG: Error categorizing email: {e}")
+                            # Fallback to default folder
+                            try:
+                                available_folders = created_folder_names + [f for f in existing_folders if f != 'Archive']
+                                default_folder = 'Personal' if 'Personal' in available_folders else available_folders[0]
+                                await email_handler.move_emails_to_folder([email_id], default_folder)
+                                organized_count += 1
+                                print(f"DEBUG: Moved to {default_folder} folder (fallback)")
+                            except Exception as fallback_error:
+                                print(f"DEBUG: Failed to move email: {fallback_error}")
                     
                     folder_info = ""
                     if created_folder_names:
