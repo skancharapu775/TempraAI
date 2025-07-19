@@ -54,7 +54,15 @@ function Navbar() {
               </div>
 
               {/* Right Side: Login Button */}
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-5">
+                {isLoggedIn && 
+                    <Link
+                    to="/todo"
+                    className="btn btn-md btn-primary normal-case"
+                    >
+                        Todos
+                    </Link>
+                }
                 {!isLoggedIn ? (
                     <Link
                     to="/login"
@@ -79,6 +87,8 @@ function Navbar() {
                         </button> */}
                     </div>
                 )}
+
+
               </div>
             </div>
           </div>
