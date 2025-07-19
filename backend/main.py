@@ -293,10 +293,10 @@ async def handle_general_chat(client, message: str, conversation_history: List[d
     
     return response.choices[0].message.content.strip()
 
-async def handle_todo_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
+async def handle_todo_intent(client, message: str, email, pending_changes: dict = None) -> tuple[str, dict, bool]:
     """Delegate todo intent to todo.py handler."""
     todo_handler = create_todo_handler()
-    return await todo_handler.handle_todo_intent(message, pending_changes)
+    return await todo_handler.handle_todo_intent(message, email, pending_changes)
 
 async def handle_goal_intent(client, message: str, pending_changes: dict = None) -> tuple[str, dict, bool]:
     """Delegate goal intent to goals.py handler."""
@@ -347,7 +347,7 @@ async def process_message(request: ProcessMessageRequest = Body(...)):
         )
     elif intent == "Todo":
         reply, pending_changes, show_accept_deny = await handle_todo_intent(
-            client, request.message, request.pending_changes
+            client, request.message, request.email, request.pending_changes
         )
     elif intent == "Multistep":
         # Agentic multi-tool workflow
@@ -731,6 +731,18 @@ async def handle_change_action(request: ChangeActionRequest):
             calendar = request.change_details.get("calendar")
             plan, plan_text = await goals_handler.generate_week_plan(goal, duration, calendar)
             message = f"Goal plan accepted and saved!\n\nHere is your week-by-week plan:\n\n{plan_text}"
+            return ChangeActionResponse(
+                success=True,
+                message=message,
+                intent="General"
+            )
+        elif request.change_details.get("type") == "todo":
+            todo_name = request.change_details.get("message", "Untitled Task")
+            db.collection("todos").document(request.email).set({
+                "title": todo_name,
+                "completed": False
+            })
+            message = f"✅ Your task '{todo_name}' has been saved to your todo list."
             return ChangeActionResponse(
                 success=True,
                 message=message,

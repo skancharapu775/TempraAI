@@ -88,12 +88,9 @@ def firebase_login(data: dict):
 @router.get("/me")
 def get_user(
     session_token: str = Cookie(None),
-    authorization: str = Header(None)
 ):
     token = None
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.split(" ", 1)[1]
-    elif session_token:
+    if session_token:
         token = session_token
     if not token:
         raise HTTPException(status_code=401, detail="No session token provided")
