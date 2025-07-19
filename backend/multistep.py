@@ -4,6 +4,7 @@ from emails import create_email_handler
 from scheduling import create_schedule_handler
 import requests
 import os
+import asyncio
 
 """
 Advanced tool-calling agent for multi-step, adaptive LLM workflows.
@@ -182,37 +183,165 @@ async def add_calendar_event(title: str, start_time: str, end_time: str, access_
 
 # --- Tool-Calling Agent ---
 
+async def select_required_tools(
+    client: Any,
+    message: str,
+    all_tools: List[Tool],
+    conversation_history: List[dict] = None
+) -> List[Tool]:
+    """
+    Use LLM to determine which tools are needed for the user's request.
+    This reduces token usage by only sending relevant tools to the main agent.
+    """
+    
+    # Create a simple list of tool names and descriptions for selection
+    tool_options = []
+    for tool in all_tools:
+        tool_options.append(f"- {tool.name}: {tool.description}")
+    
+    tool_list = "\n".join(tool_options)
+    
+    selection_prompt = f"""You are a tool selector. Based on the user's request, determine which tools are needed to complete the task.
+
+Available tools:
+{tool_list}
+
+User request: "{message}"
+
+Instructions:
+1. Analyze what the user wants to accomplish
+2. Select ONLY the tools that are necessary to complete the task
+3. Do not select tools that are not needed
+4. Return a JSON array of tool names only
+
+Examples:
+- User: "Add a couple reminders to call mom this week" → ["add_reminder"]
+- User: "Search my emails for meeting requests and add calendar events for each" → ["search_email", "add_calendar_event"]
+- User: "Find todos about project X and create reminders for them" → ["search_google", "add_reminder"]
+
+Return ONLY a JSON array of tool names, like: ["tool1", "tool2"]"""
+
+    messages = [{"role": "user", "content": selection_prompt}]
+    
+    # Add recent conversation context if available
+    if conversation_history:
+        recent_history = conversation_history[-2:]  # Only last 2 messages for context
+        filtered_history = [
+            msg for msg in recent_history
+            if msg.get("content") is not None and msg.get("content").strip() != ""
+        ]
+        messages = filtered_history + messages
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",  # Use cheaper model for tool selection
+            messages=messages,
+            max_tokens=100,
+            temperature=0.1
+        )
+        
+        content = response.choices[0].message.content.strip()
+        
+        # Parse the JSON response
+        try:
+            # Clean the response - remove code blocks if present
+            if content.startswith('```'):
+                content = content.split('```')[1]
+                if content.startswith('json'):
+                    content = content[4:]
+                content = content.strip()
+            
+            if content.endswith('```'):
+                content = content[:-3].strip()
+            
+            selected_tool_names = json.loads(content)
+            
+            # Filter tools to only include selected ones
+            selected_tools = [tool for tool in all_tools if tool.name in selected_tool_names]
+            
+            print(f"🔧 Tool selection: {selected_tool_names} -> {len(selected_tools)} tools selected")
+            print(f"📋 Selected tools: {[tool.name for tool in selected_tools]}")
+            return selected_tools
+            
+        except json.JSONDecodeError as e:
+            print(f"Error parsing tool selection JSON: {e}")
+            print(f"Raw content: {content}")
+            # Fallback: return all tools if parsing fails
+            return all_tools
+            
+    except Exception as e:
+        print(f"Error in tool selection: {e}")
+        # Fallback: return all tools if selection fails
+        return all_tools
+
 async def tool_calling_agent(
     client: Any,
     message: str,
     tools: List[Tool],
-    max_steps: int = 8,
+    max_steps: int = 3,  # Reduced from 8 to 3 to prevent runaway loops
     system_prompt: str = None,
     conversation_history: List[dict] = None,
     **kwargs
 ) -> Tuple[str, dict, bool]:
     """
-    Advanced tool-calling agent loop. The LLM can:
-    - See the user message and available tools
-    - Call tools one at a time, receiving the result after each call
-    - Decide what to do next (call another tool, ask user, or finish)
+    Advanced tool-calling agent for multi-step, adaptive LLM workflows.
+    First selects required tools, then executes the workflow with only those tools.
     """
-    tool_map = {tool.name: tool for tool in tools}
-    history = conversation_history[:] if conversation_history else []
-    tool_results = {}
-    steps = 0
-    done = False
-    last_tool_result = None
     
+    # Step 1: Select only the required tools for this request
+    required_tools = await select_required_tools(client, message, tools, conversation_history)
+    
+    # Step 2: Execute the agent with only the required tools
+    return await execute_tool_calling_agent(
+        client=client,
+        message=message,
+        tools=required_tools,
+        max_steps=max_steps,
+        system_prompt=system_prompt,
+        conversation_history=conversation_history,
+        **kwargs
+    )
+
+async def execute_tool_calling_agent(
+    client: Any,
+    message: str,
+    tools: List[Tool],
+    max_steps: int = 3,  # Reduced from 8 to 3 to prevent runaway loops
+    system_prompt: str = None,
+    conversation_history: List[dict] = None,
+    **kwargs
+) -> Tuple[str, dict, bool]:
+    """
+    Execute the tool-calling agent with the provided tools.
+    This is the original agent logic, now separated from tool selection.
+    """
+    
+    # Initialize conversation history
+    history = conversation_history or []
+    
+    # Create tool list string for the prompt
+    tool_list_str = ""
+    for tool in tools:
+        tool_list_str += f"- {tool.name}: {tool.description}\n"
+        if tool.parameters and tool.parameters.get("properties"):
+            for param_name, param_info in tool.parameters["properties"].items():
+                param_desc = param_info.get("description", "")
+                param_type = param_info.get("type", "")
+                tool_list_str += f"  - {param_name} ({param_type}): {param_desc}\n"
+        tool_list_str += "\n"
+
     if not system_prompt:
         system_prompt = (
             """You are an advanced assistant with access to the following tools. 
-You may call one tool at a time, and after each call you will see the result as a JSON block.
-Use the tool result to plan your next step. For example, if you search emails and receive a list of emails, analyze their content and, if you find any todos, call add_todo for each one. 
-If you are done, reply with a final message to the user. 
-If you need more clarification, ask the user. 
+You may call one tool at a time, and after each call you will see the result. 
+IMPORTANT: After each tool call, analyze the result and decide what to do next:
+- If the result contains useful information, use it to call another tool or provide a final answer
+- If the result shows no data found, try a different approach or ask the user for clarification
+- If you are done, reply with a final message to the user
+- If you need more clarification, ask the user
+
 You do NOT need to ask the user for access_token or refresh_token. These will be provided automatically to any tool that needs them.
-If you repeat the same tool call and arguments more than twice, stop and ask the user for clarification.
+If you repeat the same tool call and arguments more than twice, stop and ask for clarification.
 
 When you want to use a tool, reply with a JSON object like:
 {"tool": "tool_name", "args": {...}}
@@ -221,22 +350,23 @@ When you are done, reply with:
 If you need more information from the user, reply with:
 {"final": "Could you clarify..."}
 
-Examples:
-User: Read my email and add the todos you can find.
-Assistant: {"tool": "search_email", "args": {"query": "is:unread"}}
-(after seeing the result)
-Assistant: {"tool": "add_todo", "args": {"title": "Follow up with John"}}
-(when done)
-Assistant: {"final": "I've read your emails and added the todos I found to your list."}
-"""
+Example workflow:
+User: "Find emails about meetings and add calendar events for each"
+1. Call search_email to find meeting emails
+2. Analyze the email results - if emails found, extract meeting details and call add_calendar_event for each
+3. If no emails found, ask user to clarify or try different search terms
+4. Reply with final summary
+
+Remember: You have access to the user's credentials automatically. Do not ask for them."""
         )
-    
-    # Compose tool descriptions for the LLM
-    tool_list_str = "\n".join([f"- {tool.name}: {tool.description}" for tool in tools])
-    
-    # Track repeated tool calls
+
+    # Agent loop
+    done = False
+    steps = 0
+    last_tool_result = None
     last_tool_call = None
     repeat_count = 0
+    
     while not done and steps < max_steps:
         steps += 1
         messages = [
@@ -245,59 +375,124 @@ Assistant: {"final": "I've read your emails and added the todos I found to your 
         messages.extend(history)
         messages.append({"role": "user", "content": message})
         
-        # Ask LLM what to do next
+        print(f"DEBUG: Sending {len(messages)} messages to LLM")
+        print(f"DEBUG: System prompt length: {len(system_prompt + tool_list_str)} chars")
+        print(f"DEBUG: History messages: {len(history)}")
+        print(f"DEBUG: User message: {message}")
+        
+        # Get LLM response
         response = client.chat.completions.create(
             model="gpt-4",
             messages=messages,
-            max_tokens=400,
-            temperature=0.2
+            max_tokens=500,
+            temperature=0.1
         )
-        content = response.choices[0].message.content.strip()
-        print(f"[AGENT DEBUG] LLM raw output: {content}")
-        try:
-            if content.startswith("{"):
-                action = json.loads(content)
-            else:
-                action = {"final": content}
-        except Exception:
-            action = {"final": content}
         
-        if "final" in action:
-            return action["final"], {"steps": steps, "tool_results": tool_results}, False
-        elif "tool" in action:
-            tool_name = action["tool"]
-            args = action.get("args", {})
-            tool = tool_map.get(tool_name)
-            # Check for repeated tool calls
-            tool_call_signature = (tool_name, json.dumps(args, sort_keys=True))
-            if tool_call_signature == last_tool_call:
-                repeat_count += 1
+        content = response.choices[0].message.content.strip()
+        print(f"DEBUG: LLM response (step {steps}): {content}")
+        
+        # Log the current conversation state
+        print(f"DEBUG: Current history length: {len(history)}")
+        if history:
+            print(f"DEBUG: Last history item: {history[-1]}")
+        print(f"DEBUG: Last tool result: {last_tool_result}")
+        
+        # Parse the response
+        try:
+            # Try to parse as JSON
+            if content.startswith('{') and content.endswith('}'):
+                parsed = json.loads(content)
+                
+                if "final" in parsed:
+                    # Agent is done
+                    return parsed["final"], {"type": "multistep_complete", "steps": steps}, False
+                
+                elif "tool" in parsed and "args" in parsed:
+                    # Tool call
+                    tool_name = parsed["tool"]
+                    args = parsed["args"]
+                    
+                    # Check for repeated tool calls
+                    current_call = f"{tool_name}:{json.dumps(args, sort_keys=True)}"
+                    print(f"DEBUG: Current call: {current_call}")
+                    print(f"DEBUG: Last call: {last_tool_call}")
+                    print(f"DEBUG: Repeat count: {repeat_count}")
+                    
+                    if current_call == last_tool_call:
+                        repeat_count += 1
+                        print(f"DEBUG: Repeated call detected! Count: {repeat_count}")
+                        if repeat_count >= 2:  # Reduced from 3 to 2 for faster detection
+                            print(f"DEBUG: Max repeats reached, stopping agent")
+                            return "I'm stuck repeating the same tool call. Could you clarify your request?", {"type": "multistep_error", "error": "repeated_tool_call"}, False
+                    else:
+                        repeat_count = 0
+                        last_tool_call = current_call
+                        print(f"DEBUG: New call, reset repeat count")
+                    
+                    # Find and execute the tool
+                    tool_found = False
+                    for tool in tools:
+                        if tool.name == tool_name:
+                            tool_found = True
+                            try:
+                                # Inject credentials if available and tool needs them
+                                if "access_token" in kwargs and "refresh_token" in kwargs:
+                                    args["access_token"] = kwargs["access_token"]
+                                    args["refresh_token"] = kwargs["refresh_token"]
+                                
+                                # Execute the tool
+                                print(f"DEBUG: Executing tool '{tool_name}' with args: {args}")
+                                if asyncio.iscoroutinefunction(tool.func):
+                                    last_tool_result = await tool.func(**args)
+                                else:
+                                    last_tool_result = tool.func(**args)
+                                
+                                print(f"DEBUG: Tool '{tool_name}' returned: {last_tool_result}")
+                                
+                                # Feed tool result in a clear format
+                                try:
+                                    if isinstance(last_tool_result, str):
+                                        tool_result_text = last_tool_result
+                                    else:
+                                        tool_result_text = json.dumps(last_tool_result, indent=2)
+                                except Exception:
+                                    tool_result_text = str(last_tool_result)
+                                
+                                # Add the tool result to history with clear formatting
+                                result_message = f"🔧 Tool '{tool_name}' executed successfully.\n\n📋 Result:\n{tool_result_text}\n\nWhat would you like to do next?"
+                                history.append({
+                                    "role": "assistant", 
+                                    "content": result_message
+                                })
+                                print(f"DEBUG: Added to history: {result_message[:200]}...")
+                                
+                                break
+                            except Exception as e:
+                                error_msg = f"Error executing {tool_name}: {str(e)}"
+                                history.append({"role": "assistant", "content": f"ERROR: {error_msg}"})
+                                last_tool_result = error_msg
+                                break
+                    
+                    if not tool_found:
+                        error_msg = f"Tool '{tool_name}' not found"
+                        history.append({"role": "assistant", "content": f"ERROR: {error_msg}"})
+                        last_tool_result = error_msg
+                
+                else:
+                    # Invalid JSON format
+                    history.append({"role": "assistant", "content": content})
+                    last_tool_result = None
+            
             else:
-                repeat_count = 0
-            last_tool_call = tool_call_signature
-            if repeat_count >= 3:
-                return "I'm stuck repeating the same tool call. Could you clarify your request?", {"steps": steps, "tool_results": tool_results}, False
-            if not tool:
-                last_tool_result = f"Unknown tool: {tool_name}"
-            else:
-                try:
-                    for cred_key in ["access_token", "refresh_token"]:
-                        if cred_key in tool.parameters.get("properties", {}) and cred_key not in args and cred_key in kwargs:
-                            args[cred_key] = kwargs[cred_key]
-                    result = await tool.func(**args)
-                    last_tool_result = result
-                    tool_results[tool_name] = result
-                except Exception as e:
-                    last_tool_result = f"Error calling tool {tool_name}: {e}"
-            # Feed tool result as structured JSON
-            try:
-                tool_result_json = json.dumps(last_tool_result) if not isinstance(last_tool_result, str) else last_tool_result
-            except Exception:
-                tool_result_json = str(last_tool_result)
-            history.append({"role": "assistant", "content": f"TOOL RESULT:\n{tool_result_json}"})
-        else:
-            return content, {"steps": steps, "tool_results": tool_results}, False
-    return "Sorry, I couldn't complete your request in time.", {"steps": steps, "tool_results": tool_results}, False
+                # Not JSON, treat as final response
+                return content, {"type": "multistep_complete", "steps": steps}, False
+                
+        except json.JSONDecodeError:
+            # Not valid JSON, treat as final response
+            return content, {"type": "multistep_complete", "steps": steps}, False
+    
+    # Max steps reached
+    return "I've reached the maximum number of steps. Could you break this down into smaller tasks?", {"type": "multistep_error", "error": "max_steps_reached"}, False
 
 # --- Example Tool Registration ---
 
