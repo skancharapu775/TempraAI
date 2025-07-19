@@ -91,6 +91,7 @@ async def classify_intent_for_message(client, message: str, conversation_history
         User: "Add 'read a book' to my todo list" -> Todo
         User: "Find all emails from John and add a reminder to reply to each one" -> Multistep
         User: "Search my calendar for meetings tomorrow and email me a summary" -> Multistep
+        User: "Add two things to my todo list" -> Multistep (because more than one)
         User: "What's the capital of France?" -> General
         
         Carefully read the user's message and context. Return ONLY ONE WORD from the choices above, with no punctuation or explanation.

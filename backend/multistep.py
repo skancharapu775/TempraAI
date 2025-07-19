@@ -5,6 +5,9 @@ from scheduling import create_schedule_handler
 import requests
 import os
 import asyncio
+from firebase import db
+from uuid import uuid4
+import datetime
 
 """
 Advanced tool-calling agent for multi-step, adaptive LLM workflows.
@@ -36,11 +39,19 @@ async def add_reminder(title: str, due_date: str = None, due_time: str = None, *
         msg += f" at {due_time}"
     return f"Created reminder: {msg}"
 
-async def add_todo(title: str, due_date: str = None, **kwargs):
+async def add_todo(title: str, email: str, due_date: str = None, **kwargs):
+    todo_data = {
+        "title": title,
+        "completed": False,
+        "id": str(uuid4())
+    }
+    if due_date:
+        todo_data["due_date"] = due_date
+    db.collection("todos").document(email).collection("todos").add(todo_data)
     msg = f"[Todo] '{title}'"
     if due_date:
         msg += f" (due {due_date})"
-    return f"Added todo: {msg}"
+    return f"✅ Todo added for {email}: {msg}"
 
 async def search_email(query: str, limit: int = 10, access_token: str = None, refresh_token: str = None, **kwargs):
     """Search emails using Gmail API"""
@@ -331,7 +342,9 @@ async def execute_tool_calling_agent(
         tool_list_str += "\n"
 
     if not system_prompt:
+        today_str = datetime.datetime.now().strftime('%Y-%m-%d')
         system_prompt = (
+            "Today is {today_str}.\n"
             """You are an advanced assistant with access to the following tools. 
 You may call one tool at a time, and after each call you will see the result. 
 IMPORTANT: After each tool call, analyze the result and decide what to do next:
@@ -513,15 +526,16 @@ reminder_tool = Tool(
 
 todo_tool = Tool(
     name="add_todo",
-    description="Add a todo item with a title and optional due date (YYYY-MM-DD).",
+    description="Add a todo item with a title, email, and optional due date (YYYY-MM-DD).",
     func=add_todo,
     parameters={
         "type": "object",
         "properties": {
             "title": {"type": "string", "description": "The title of the todo item"},
+            "email": {"type": "string", "description": "The user's email address (required)"},
             "due_date": {"type": "string", "description": "Due date in YYYY-MM-DD format (optional)"}
         },
-        "required": ["title"]
+        "required": ["title", "email"]
     }
 )
 
