@@ -259,6 +259,74 @@ async def get_calendar_events(message: str, access_token: str = None, refresh_to
     except Exception as e:
         return f"Error getting calendar events: {str(e)}"
 
+async def get_email_metadata(limit: int = 10, access_token: str = None, refresh_token: str = None, **kwargs):
+    """Get recent email metadata (IDs, subjects, senders) without search query."""
+    try:
+        # Create email handler with provided credentials
+        email_handler = create_email_handler(
+            provider="gmail",
+            access_token=access_token,
+            refresh_token=refresh_token,
+            client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
+            client_secret="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"
+        )
+        
+        # Get recent emails
+        emails = await email_handler.get_gmail_recent_emails(limit)
+        
+        if not emails:
+            return "No recent emails found."
+        
+        # Format the email metadata
+        formatted_emails = []
+        for i, email in enumerate(emails, 1):
+            formatted_emails.append(f"{i}. **{email.get('subject', 'No subject')}**")
+            formatted_emails.append(f"   📧 From: {email.get('from', 'Unknown')}")
+            formatted_emails.append(f"   📅 Date: {email.get('date', 'Unknown')}")
+            formatted_emails.append(f"   🆔 ID: {email.get('id', 'Unknown')}")
+            formatted_emails.append(f"   📝 Snippet: {email.get('snippet', '')[:100]}...")
+            formatted_emails.append("")
+        
+        return f"Found {len(emails)} recent emails:\n\n" + "\n".join(formatted_emails)
+        
+    except Exception as e:
+        return f"Error getting email metadata: {str(e)}"
+
+async def get_email_content(email_id: str, access_token: str = None, refresh_token: str = None, **kwargs):
+    """Get the full content of an email by its ID."""
+    try:
+        # Create email handler with provided credentials
+        email_handler = create_email_handler(
+            provider="gmail",
+            access_token=access_token,
+            refresh_token=refresh_token,
+            client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
+            client_secret="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"
+        )
+        
+        # Get the full email content
+        email = await email_handler.get_gmail_email_by_id(email_id)
+        
+        if not email:
+            return f"Email with ID '{email_id}' not found or could not be retrieved."
+        
+        # Format the email content
+        formatted_email = []
+        formatted_email.append(f"**📧 Email Content**")
+        formatted_email.append(f"")
+        formatted_email.append(f"**Subject:** {email.get('subject', 'No subject')}")
+        formatted_email.append(f"**From:** {email.get('from', 'Unknown')}")
+        formatted_email.append(f"**Date:** {email.get('date', 'Unknown')}")
+        formatted_email.append(f"**ID:** {email.get('id', 'Unknown')}")
+        formatted_email.append(f"")
+        formatted_email.append(f"**Body:**")
+        formatted_email.append(f"{email.get('body', 'No content available')}")
+        
+        return "\n".join(formatted_email)
+        
+    except Exception as e:
+        return f"Error getting email content: {str(e)}"
+
 # --- Tool-Calling Agent ---
 
 async def select_required_tools(
@@ -703,5 +771,35 @@ get_calendar_events_tool = Tool(
     }
 )
 
+get_email_metadata_tool = Tool(
+    name="get_email_metadata",
+    description="Get recent email metadata (IDs, subjects, senders, dates, snippets). Returns the most recent emails from the inbox. Useful for getting a list of recent emails before retrieving full content. Requires access_token and refresh_token. You do NOT need to ask the user for these tokens; they will be provided automatically.",
+    func=get_email_metadata,
+    parameters={
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer", "description": "Maximum number of recent emails to return (default 10)"},
+            "access_token": {"type": "string", "description": "Gmail access token (provided automatically)"},
+            "refresh_token": {"type": "string", "description": "Gmail refresh token (provided automatically)"}
+        },
+        "required": ["access_token", "refresh_token"]
+    }
+)
+
+get_email_content_tool = Tool(
+    name="get_email_content",
+    description="Get the full content of an email by its ID. Use this after getting email metadata to retrieve the complete email body and details. Requires access_token and refresh_token. You do NOT need to ask the user for these tokens; they will be provided automatically.",
+    func=get_email_content,
+    parameters={
+        "type": "object",
+        "properties": {
+            "email_id": {"type": "string", "description": "The ID of the email to retrieve (obtained from get_email_metadata)"},
+            "access_token": {"type": "string", "description": "Gmail access token (provided automatically)"},
+            "refresh_token": {"type": "string", "description": "Gmail refresh token (provided automatically)"}
+        },
+        "required": ["email_id", "access_token", "refresh_token"]
+    }
+)
+
 # Example tools list for agent usage:
-tools = [reminder_tool, todo_tool, search_email_tool, note_email_tool, search_google_tool, search_calendar_tool, add_calendar_event_tool, get_calendar_events_tool] 
+tools = [reminder_tool, todo_tool, search_email_tool, note_email_tool, search_google_tool, search_calendar_tool, add_calendar_event_tool, get_calendar_events_tool, get_email_metadata_tool, get_email_content_tool] 
