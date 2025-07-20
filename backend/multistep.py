@@ -39,7 +39,11 @@ async def add_reminder(title: str, due_date: str = None, due_time: str = None, *
         msg += f" at {due_time}"
     return f"Created reminder: {msg}"
 
-async def add_todo(title: str, email: str, due_date: str = None, **kwargs):
+async def add_todo(title: str, due_date: str = None, **kwargs):
+    # Always get the user's email from kwargs
+    email = kwargs.get('user_email')
+    if not email:
+        return "Error: user_email is required to add a todo."
     todo_data = {
         "title": title,
         "completed": False,
@@ -495,16 +499,7 @@ async def execute_tool_calling_agent(
             '{"final": "your final message to the user"}' + "\n"
             "If you need more information from the user, reply with:\n"
             '{"final": "Could you clarify..."}' + "\n"
-            "For email-related questions, you have two approaches:\n"
-            "1. Use get_email_context to get recent emails as context, then analyze them directly\n"
-            "2. Use search_email for specific queries, then get_email_content for full analysis\n"
-            "Example workflow:\n"
-            'User: "What actionable items do I have in my recent emails?"' + "\n"
-            "1. Call get_email_context to get recent emails as context\n"
-            "2. Analyze the email content directly to identify actionable items\n"
-            "3. Use add_todo to create todos for each actionable item found\n"
-            "4. Reply with a summary of what was found and created\n"
-            "For finding actionable items in emails, use broad search terms like 'meeting', 'deadline', 'review', 'follow up', 'action required', 'please', 'need to', 'should', 'must', etc. Then analyze the full content to identify specific actionable items.\n"
+            "Use get_* functions (like get_calendar_events, get_email_metadata) when not doing explicit/literal string queries. Use search_* functions only for strict, explicit queries.\n"
             "Remember: You have access to the user's credentials automatically. Do not ask for them."
         )
 
@@ -562,10 +557,6 @@ async def execute_tool_calling_agent(
                     
                     # Check for repeated tool calls
                     current_call = f"{tool_name}:{json.dumps(args, sort_keys=True)}"
-                    print(f"DEBUG: Current call: {current_call}")
-                    print(f"DEBUG: Last call: {last_tool_call}")
-                    print(f"DEBUG: Repeat count: {repeat_count}")
-                    
                     if current_call == last_tool_call:
                         repeat_count += 1
                         print(f"DEBUG: Repeated call detected! Count: {repeat_count}")
@@ -573,7 +564,7 @@ async def execute_tool_calling_agent(
                             print(f"DEBUG: Max repeats reached, stopping agent")
                             return "I'm stuck repeating the same tool call. Could you clarify your request?", {"type": "multistep_error", "error": "repeated_tool_call"}, False
                     else:
-                        repeat_count = 0
+                        repeat_count = 1  # Start at 1 for the new call
                         last_tool_call = current_call
                         print(f"DEBUG: New call, reset repeat count")
                     
@@ -587,7 +578,9 @@ async def execute_tool_calling_agent(
                                 if "access_token" in kwargs and "refresh_token" in kwargs:
                                     args["access_token"] = kwargs["access_token"]
                                     args["refresh_token"] = kwargs["refresh_token"]
-                                
+                                # Inject user_email if available
+                                if "user_email" in kwargs:
+                                    args["user_email"] = kwargs["user_email"]
                                 # Execute the tool
                                 print(f"DEBUG: Executing tool '{tool_name}' with args: {args}")
                                 if asyncio.iscoroutinefunction(tool.func):
@@ -661,16 +654,15 @@ reminder_tool = Tool(
 
 todo_tool = Tool(
     name="add_todo",
-    description="Add a todo item with a title, email, and optional due date (YYYY-MM-DD).",
+    description="Add a todo item with a title and optional due date (YYYY-MM-DD). The todo will always be added for the current authenticated user.",
     func=add_todo,
     parameters={
         "type": "object",
         "properties": {
             "title": {"type": "string", "description": "The title of the todo item"},
-            "email": {"type": "string", "description": "The user's email address (required)"},
             "due_date": {"type": "string", "description": "Due date in YYYY-MM-DD format (optional)"}
         },
-        "required": ["title", "email"]
+        "required": ["title"]
     }
 )
 
@@ -773,7 +765,7 @@ get_calendar_events_tool = Tool(
 
 get_email_metadata_tool = Tool(
     name="get_email_metadata",
-    description="Get recent email metadata (IDs, subjects, senders, dates, snippets). Returns the most recent emails from the inbox. Useful for getting a list of recent emails before retrieving full content. Requires access_token and refresh_token. You do NOT need to ask the user for these tokens; they will be provided automatically.",
+    description="Get recent email metadata (IDs, subjects, senders, dates, snippets). Returns the most recent emails from the inbox. Useful for getting a list of recent emails before retrieving full content. Requires access_token and refresh_token. Pairs well with get_email_content_tool",
     func=get_email_metadata,
     parameters={
         "type": "object",

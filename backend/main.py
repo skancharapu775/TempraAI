@@ -353,14 +353,15 @@ async def process_message(request: ProcessMessageRequest = Body(...)):
     elif intent == "Multistep":
         # Agentic multi-tool workflow
         creds = get_google_creds(request.email)
-        # Pass credentials as kwargs for tools that need them
+        # Pass credentials and user_email as kwargs for tools that need them
         agent_reply, agent_data, _ = await tool_calling_agent(
             client=client,
             message=request.message,
             tools=multistep_tools,
             conversation_history=request.conversation_history,
             access_token=creds.token,
-            refresh_token=creds.refresh_token
+            refresh_token=creds.refresh_token,
+            user_email=request.email  # <-- Ensure user_email is passed
         )
         reply = agent_reply
         pending_changes = agent_data
