@@ -192,6 +192,73 @@ async def add_calendar_event(title: str, start_time: str, end_time: str, access_
     except Exception as e:
         return f"Error adding calendar event: {str(e)}"
 
+
+
+async def note_email(subject: str, body: str, access_token: str = None, refresh_token: str = None, **kwargs):
+    """Send a note email to the user themselves"""
+    try:
+        # Get user email from kwargs
+        user_email = kwargs.get('user_email')
+        if not user_email:
+            return "Error: user_email is required to send note email"
+        
+        # Create email handler with provided credentials
+        email_handler = create_email_handler(
+            provider="gmail",
+            access_token=access_token,
+            refresh_token=refresh_token,
+            client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
+            client_secret="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"
+        )
+        
+        # Send note email to self
+        result = await email_handler.send_gmail_email(
+            subject=subject,
+            recipient=user_email,
+            body=body
+        )
+        
+        return f"📝 Note email sent to yourself ({user_email}):\n\n**Subject:** {subject}\n\n**Body:**\n{body}"
+        
+    except Exception as e:
+        return f"Error sending note email: {str(e)}"
+
+async def get_calendar_events(message: str, access_token: str = None, refresh_token: str = None, **kwargs):
+    """Get calendar events for a specific time period based on natural language description."""
+    try:
+        # Create schedule handler with provided credentials
+        schedule_handler = create_schedule_handler(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            client_id="1090386684531-io9ttj5vpiaj6td376v2vs8t3htknvnn.apps.googleusercontent.com",
+            client_secret="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"
+        )
+        
+        # Get events using the handler's get_events method
+        events = await schedule_handler.get_events(message)
+        
+        if not events:
+            return f"No calendar events found for the specified time period."
+        
+        # Format the events for display
+        formatted_events = []
+        for i, event in enumerate(events, 1):
+            formatted_events.append(f"{i}. **{event['title']}**")
+            formatted_events.append(f"   📅 Start: {event['start_time']}")
+            formatted_events.append(f"   📅 End: {event['end_time']}")
+            if event.get('attendees'):
+                formatted_events.append(f"   👥 Attendees: {', '.join(event['attendees'])}")
+            if event.get('location'):
+                formatted_events.append(f"   📍 Location: {event['location']}")
+            if event.get('description'):
+                formatted_events.append(f"   📝 Description: {event['description'][:100]}...")
+            formatted_events.append("")
+        
+        return f"Found {len(events)} calendar events:\n\n" + "\n".join(formatted_events)
+        
+    except Exception as e:
+        return f"Error getting calendar events: {str(e)}"
+
 # --- Tool-Calling Agent ---
 
 async def select_required_tools(
@@ -344,33 +411,33 @@ async def execute_tool_calling_agent(
     if not system_prompt:
         today_str = datetime.datetime.now().strftime('%Y-%m-%d')
         system_prompt = (
-            "Today is {today_str}.\n"
-            """You are an advanced assistant with access to the following tools. 
-You may call one tool at a time, and after each call you will see the result. 
-IMPORTANT: After each tool call, analyze the result and decide what to do next:
-- If the result contains useful information, use it to call another tool or provide a final answer
-- If the result shows no data found, try a different approach or ask the user for clarification
-- If you are done, reply with a final message to the user
-- If you need more clarification, ask the user
-
-You do NOT need to ask the user for access_token or refresh_token. These will be provided automatically to any tool that needs them.
-If you repeat the same tool call and arguments more than twice, stop and ask for clarification.
-
-When you want to use a tool, reply with a JSON object like:
-{"tool": "tool_name", "args": {...}}
-When you are done, reply with:
-{"final": "your final message to the user"}
-If you need more information from the user, reply with:
-{"final": "Could you clarify..."}
-
-Example workflow:
-User: "Find emails about meetings and add calendar events for each"
-1. Call search_email to find meeting emails
-2. Analyze the email results - if emails found, extract meeting details and call add_calendar_event for each
-3. If no emails found, ask user to clarify or try different search terms
-4. Reply with final summary
-
-Remember: You have access to the user's credentials automatically. Do not ask for them."""
+            f"Today is {today_str}.\n"
+            "You are an advanced assistant with access to the following tools. \n"
+            "You may call one tool at a time, and after each call you will see the result. \n"
+            "IMPORTANT: After each tool call, analyze the result and decide what to do next:\n"
+            "- If the result contains useful information, use it to call another tool or provide a final answer\n"
+            "- If the result shows no data found, try a different approach or ask the user for clarification\n"
+            "- If you are done, reply with a final message to the user\n"
+            "- If you need more clarification, ask the user\n"
+            "You do NOT need to ask the user for access_token or refresh_token. These will be provided automatically to any tool that needs them.\n"
+            "If you repeat the same tool call and arguments more than twice, stop and ask for clarification.\n"
+            "When you want to use a tool, reply with a JSON object like:\n"
+            '{"tool": "tool_name", "args": {...}}' + "\n"
+            "When you are done, reply with:\n"
+            '{"final": "your final message to the user"}' + "\n"
+            "If you need more information from the user, reply with:\n"
+            '{"final": "Could you clarify..."}' + "\n"
+            "For email-related questions, you have two approaches:\n"
+            "1. Use get_email_context to get recent emails as context, then analyze them directly\n"
+            "2. Use search_email for specific queries, then get_email_content for full analysis\n"
+            "Example workflow:\n"
+            'User: "What actionable items do I have in my recent emails?"' + "\n"
+            "1. Call get_email_context to get recent emails as context\n"
+            "2. Analyze the email content directly to identify actionable items\n"
+            "3. Use add_todo to create todos for each actionable item found\n"
+            "4. Reply with a summary of what was found and created\n"
+            "For finding actionable items in emails, use broad search terms like 'meeting', 'deadline', 'review', 'follow up', 'action required', 'please', 'need to', 'should', 'must', etc. Then analyze the full content to identify specific actionable items.\n"
+            "Remember: You have access to the user's credentials automatically. Do not ask for them."
         )
 
     # Agent loop
@@ -602,5 +669,39 @@ add_calendar_event_tool = Tool(
     }
 )
 
+
+
+note_email_tool = Tool(
+    name="note_email",
+    description="Send a note email to the user themselves. Useful for reminders, notes, or saving important information.",
+    func=note_email,
+    parameters={
+        "type": "object",
+        "properties": {
+            "subject": {"type": "string", "description": "Email subject line"},
+            "body": {"type": "string", "description": "Email body content"},
+            "user_email": {"type": "string", "description": "User's email address to send to"},
+            "access_token": {"type": "string", "description": "Gmail access token (provided automatically)"},
+            "refresh_token": {"type": "string", "description": "Gmail refresh token (provided automatically)"}
+        },
+        "required": ["subject", "body", "user_email", "access_token", "refresh_token"]
+    }
+)
+
+get_calendar_events_tool = Tool(
+    name="get_calendar_events",
+    description="Get calendar events for a specific time period using natural language. Examples: 'today', 'this week', 'next month', 'July 15th'. Returns a formatted list of events with details like title, start/end times, attendees, location, and description. Requires access_token and refresh_token. You do NOT need to ask the user for these tokens; they will be provided automatically.",
+    func=get_calendar_events,
+    parameters={
+        "type": "object",
+        "properties": {
+            "message": {"type": "string", "description": "Natural language description of the time period (e.g., 'today', 'this week', 'next month', 'July 15th')"},
+            "access_token": {"type": "string", "description": "Google Calendar access token (provided automatically)"},
+            "refresh_token": {"type": "string", "description": "Google Calendar refresh token (provided automatically)"}
+        },
+        "required": ["message", "access_token", "refresh_token"]
+    }
+)
+
 # Example tools list for agent usage:
-tools = [reminder_tool, todo_tool, search_email_tool, search_google_tool, search_calendar_tool, add_calendar_event_tool] 
+tools = [reminder_tool, todo_tool, search_email_tool, note_email_tool, search_google_tool, search_calendar_tool, add_calendar_event_tool, get_calendar_events_tool] 

@@ -369,6 +369,71 @@ class ScheduleIntentHandler:
             print("Raw content that failed to parse:", repr(content))
             return f"Sorry, I couldn't parse the delete details. Could you please provide the event information again?", None, False
 
+    async def get_events(self, message: str) -> List[Dict]:
+        """Get events for a specific day, week, etc. based on user message, returning a list of event dictionaries."""
+        # Use OpenAI to extract the period (day, week, month) and the reference date from the message
+        system_prompt = '''
+        Extract the period (day, week, month) and the reference date from the user's message. Return valid JSON like:
+        {"period": "day", "date": "2025-07-16"}
+        If no date is given, use today's date. Period must be one of: day, week, month.
+        '''
+        user_prompt = f"User message: {message}"
+        response = self.openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.2
+        )
+        content = response.choices[0].message.content.strip()
+        try:
+            import json
+            from datetime import datetime, timedelta
+            data = json.loads(content)
+            period = data.get("period", "day")
+            date_str = data.get("date", datetime.now().strftime("%Y-%m-%d"))
+            date = datetime.fromisoformat(date_str)
+            if period == "day":
+                time_min = date.replace(hour=0, minute=0, second=0).isoformat()
+                time_max = (date + timedelta(days=1)).replace(hour=0, minute=0, second=0).isoformat()
+            elif period == "week":
+                start_of_week = date - timedelta(days=date.weekday())
+                time_min = start_of_week.replace(hour=0, minute=0, second=0).isoformat()
+                time_max = (start_of_week + timedelta(days=7)).replace(hour=0, minute=0, second=0).isoformat()
+            elif period == "month":
+                time_min = date.replace(day=1, hour=0, minute=0, second=0).isoformat()
+                if date.month == 12:
+                    next_month = date.replace(year=date.year+1, month=1, day=1)
+                else:
+                    next_month = date.replace(month=date.month+1, day=1)
+                time_max = next_month.replace(hour=0, minute=0, second=0).isoformat()
+            else:
+                return []
+            
+            events = self.schedule_service.summarize_events(time_min, time_max)
+            if not events:
+                return []
+            
+            # Convert events to a standardized format
+            formatted_events = []
+            for event in events:
+                event_data = {
+                    "id": event.get("id"),
+                    "title": event.get("summary", "(No Title)"),
+                    "start_time": event['start'].get('dateTime', event['start'].get('date', '')),
+                    "end_time": event['end'].get('dateTime', event['end'].get('date', '')),
+                    "attendees": [a['email'] for a in event.get('attendees', [])] if event.get('attendees') else [],
+                    "description": event.get("description", ""),
+                    "location": event.get("location", "")
+                }
+                formatted_events.append(event_data)
+            
+            return formatted_events
+        except Exception as e:
+            print(f"Error in get_events: {e}")
+            return []
+
     async def summarize_events_intent(self, message: str) -> str:
         """Summarize events for a specific day, week, etc. based on user message, using LLM for a word summary."""
         # Use OpenAI to extract the period (day, week, month) and the reference date from the message

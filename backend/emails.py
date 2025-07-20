@@ -608,6 +608,13 @@ class EmailIntentHandler:
         else:
             return await self.search_outlook_emails(query, limit)
     
+    async def get_email_by_id(self, email_id: str) -> Dict:
+        """Get full email content by ID"""
+        if self.email_service.provider == "gmail":
+            return await self.get_gmail_email_by_id(email_id)
+        else:
+            return await self.get_outlook_email_by_id(email_id)
+    
     async def get_drafts(self) -> List[Dict]:
         """Get email drafts"""
         if self.email_service.provider == "gmail":
@@ -735,6 +742,56 @@ class EmailIntentHandler:
         except Exception as e:
             print(f"Error searching Gmail emails: {e}")
             return []
+    
+    async def get_gmail_email_by_id(self, email_id: str) -> Dict:
+        """Get full Gmail email content by ID"""
+        try:
+            msg_detail = self.email_service.client.users().messages().get(
+                userId='me', id=email_id, format='full'
+            ).execute()
+            
+            headers = msg_detail['payload']['headers']
+            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'No subject')
+            sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown')
+            date = next((h['value'] for h in headers if h['name'] == 'Date'), 'Unknown')
+            
+            # Extract body content
+            body = self._extract_email_body(msg_detail['payload'])
+            
+            return {
+                'id': email_id,
+                'subject': subject,
+                'from': sender,
+                'date': date,
+                'body': body,
+                'snippet': msg_detail.get('snippet', '')
+            }
+        except Exception as e:
+            print(f"Error getting Gmail email by ID: {e}")
+            return None
+    
+    def _extract_email_body(self, payload: Dict) -> str:
+        """Extract email body from Gmail payload"""
+        try:
+            if 'body' in payload and payload['body'].get('data'):
+                # Simple text email
+                return base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8')
+            elif 'parts' in payload:
+                # Multipart email
+                for part in payload['parts']:
+                    if part.get('mimeType') == 'text/plain':
+                        if part['body'].get('data'):
+                            return base64.urlsafe_b64decode(part['body']['data']).decode('utf-8')
+                    elif part.get('mimeType') == 'text/html':
+                        if part['body'].get('data'):
+                            # For HTML emails, return a simple text version
+                            html_content = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8')
+                            # Simple HTML to text conversion (you might want to use a proper HTML parser)
+                            return html_content.replace('<br>', '\n').replace('<p>', '\n').replace('</p>', '\n')
+            return "No readable content found"
+        except Exception as e:
+            print(f"Error extracting email body: {e}")
+            return "Error reading email content"
     
     async def get_gmail_drafts(self) -> List[Dict]:
         """Get Gmail drafts"""
@@ -1003,6 +1060,55 @@ class EmailIntentHandler:
         except Exception as e:
             print(f"Error searching Outlook emails: {e}")
             return []
+    
+    async def get_outlook_email_by_id(self, email_id: str) -> Dict:
+        """Get full Outlook email content by ID"""
+        try:
+            response = self.email_service.client.get(f"/me/messages/{email_id}")
+            msg = response.json()
+            
+            headers = msg['headers']
+            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'No subject')
+            sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown')
+            date = next((h['value'] for h in headers if h['name'] == 'Date'), 'Unknown')
+            
+            # Extract body content
+            body = self._extract_outlook_email_body(msg['body'])
+            
+            return {
+                'id': email_id,
+                'subject': subject,
+                'from': sender,
+                'date': date,
+                'body': body,
+                'snippet': msg.get('bodyPreview', '')
+            }
+        except Exception as e:
+            print(f"Error getting Outlook email by ID: {e}")
+            return None
+    
+    def _extract_outlook_email_body(self, payload: Dict) -> str:
+        """Extract email body from Outlook payload"""
+        try:
+            if 'content' in payload:
+                # Simple text email
+                return payload['content']
+            elif 'parts' in payload:
+                # Multipart email
+                for part in payload['parts']:
+                    if part.get('contentType') == 'text/plain':
+                        if part['content'].get('data'):
+                            return base64.urlsafe_b64decode(part['content']['data']).decode('utf-8')
+                    elif part.get('contentType') == 'text/html':
+                        if part['content'].get('data'):
+                            # For HTML emails, return a simple text version
+                            html_content = base64.urlsafe_b64decode(part['content']['data']).decode('utf-8')
+                            # Simple HTML to text conversion (you might want to use a proper HTML parser)
+                            return html_content.replace('<br>', '\n').replace('<p>', '\n').replace('</p>', '\n')
+            return "No readable content found"
+        except Exception as e:
+            print(f"Error extracting Outlook email body: {e}")
+            return "Error reading email content"
     
     async def get_outlook_drafts(self) -> List[Dict]:
         """Get Outlook drafts"""
