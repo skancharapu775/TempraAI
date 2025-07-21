@@ -57,7 +57,7 @@ async def add_todo(title: str, due_date: str = None, **kwargs):
         msg += f" (due {due_date})"
     return f"✅ Todo added for {email}: {msg}"
 
-async def search_email(query: str, limit: int = 10, access_token: str = None, refresh_token: str = None, **kwargs):
+async def query_email(query: str, limit: int = 10, access_token: str = None, refresh_token: str = None, **kwargs):
     """Search emails using Gmail API"""
     try:
         # Create email handler with provided credentials
@@ -382,7 +382,7 @@ Instructions:
 
 Examples:
 - User: "Add a couple reminders to call mom this week" → ["add_reminder"]
-- User: "Search my emails for meeting requests and add calendar events for each" → ["search_email", "add_calendar_event"]
+- User: "Search my emails for meeting requests and add calendar events for each" → ["query_email", "add_calendar_event"]
 - User: "Find todos about project X and create reminders for them" → ["search_google", "add_reminder"]
 
 Return ONLY a JSON array of tool names, like: ["tool1", "tool2"]"""
@@ -711,10 +711,10 @@ todo_tool = Tool(
     }
 )
 
-search_email_tool = Tool(
-    name="search_email",
+query_email_tool = Tool(
+    name="query_email",
     description="Search emails using a query string. Requires access_token and refresh_token for Gmail authentication. You do NOT need to ask the user for these tokens; they will be provided automatically.",
-    func=search_email,
+    func=query_email,
     parameters={
         "type": "object",
         "properties": {
@@ -738,21 +738,6 @@ search_google_tool = Tool(
             "num_results": {"type": "integer", "description": "Number of results to return (default 5)"}
         },
         "required": ["query"]
-    }
-)
-
-search_calendar_tool = Tool(
-    name="search_calendar",
-    description="Search Google Calendar for events matching a query string. Requires access_token and refresh_token. You do NOT need to ask the user for these tokens; they will be provided automatically.",
-    func=search_calendar,
-    parameters={
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "Search query for calendar events"},
-            "access_token": {"type": "string", "description": "Google Calendar access token (provided automatically)"},
-            "refresh_token": {"type": "string", "description": "Google Calendar refresh token (provided automatically)"}
-        },
-        "required": ["query", "access_token", "refresh_token"]
     }
 )
 
@@ -839,4 +824,4 @@ get_email_content_tool = Tool(
 )
 
 # Example tools list for agent usage:
-tools = [reminder_tool, todo_tool, search_email_tool, note_email_tool, search_google_tool, search_calendar_tool, add_calendar_event_tool, get_calendar_events_tool, get_email_metadata_tool, get_email_content_tool] 
+tools = [reminder_tool, todo_tool, note_email_tool, search_google_tool, add_calendar_event_tool, get_calendar_events_tool, get_email_metadata_tool, get_email_content_tool] 

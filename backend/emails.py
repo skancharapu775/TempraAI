@@ -102,7 +102,7 @@ class EmailIntentHandler:
         elif email_function == "priority": # no confirmation
             return await self.get_priority_emails(message)
         elif email_function == "search": # no confirmation
-            return await self.search_emails(message)
+            return await self.query_emails(message)
         elif email_function == "draft": # no confirmation
             return await self.manage_drafts(message)
         elif email_function == "compose": # confirmation
@@ -309,7 +309,7 @@ class EmailIntentHandler:
         except Exception as e:
             return f"Sorry, I couldn't organize your emails: {str(e)}", None, False
     
-    async def search_emails(self, message: str) -> Tuple[str, dict, bool]:
+    async def query_emails(self, message: str) -> Tuple[str, dict, bool]:
         """Search for specific emails"""
         try:
             # Extract search query from message
