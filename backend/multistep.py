@@ -90,50 +90,66 @@ async def search_email(query: str, limit: int = 10, access_token: str = None, re
         return f"Error searching emails: {str(e)}"
 
 async def search_google(query: str, num_results: int = 5, **kwargs):
-    """Search Google using a web search API"""
+    """Search the web using a more reliable search API"""
     try:
-        # DuckDuckGo Instant Answer API (free, no API key)
-        url = "https://api.duckduckgo.com/"
-        params = {
-            'q': query,
-            'format': 'json',
-            'no_html': '1',
-            'skip_disambig': '1'
+        print(f"🔍 DEBUG: Searching for '{query}' with {num_results} results")
+        
+        # Use SerpAPI (free tier available) or similar service
+        # For now, let's use a simple web scraping approach with DuckDuckGo search
+        search_url = f"https://duckduckgo.com/html/?q={requests.utils.quote(query)}"
+        print(f"🔍 DEBUG: Search URL: {search_url}")
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(search_url, headers=headers, timeout=10)
         response.raise_for_status()
-        data = response.json()
+        print(f"🔍 DEBUG: Response status: {response.status_code}")
+        
+        # Simple parsing of search results
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(response.text, 'html.parser')
         
         results = []
+        results.append(f"🔍 **Search Results for '{query}':**")
         
-        # Get instant answer if available
-        if data.get('Abstract'):
-            results.append(f"📖 **Instant Answer:** {data['Abstract']}")
-            if data.get('AbstractURL'):
-                results.append(f"Source: {data['AbstractURL']}")
-            results.append("")
+        # Look for search result links
+        search_results = soup.find_all('a', class_='result__a')[:num_results]
+        print(f"🔍 DEBUG: Found {len(search_results)} results with class 'result__a'")
         
-        # Get related topics
-        if data.get('RelatedTopics'):
-            results.append("🔍 **Related Information:**")
-            for i, topic in enumerate(data['RelatedTopics'][:num_results], 1):
-                if isinstance(topic, dict) and topic.get('Text'):
-                    results.append(f"{i}. {topic['Text'][:200]}...")
-                elif isinstance(topic, str):
-                    results.append(f"{i}. {topic[:200]}...")
-            results.append("")
+        if search_results:
+            for i, result in enumerate(search_results, 1):
+                title = result.get_text(strip=True)
+                url = result.get('href', '')
+                if title and url:
+                    results.append(f"{i}. **{title}**")
+                    results.append(f"   URL: {url}")
+                    results.append("")
+        else:
+            # Fallback: try to find any links that might be results
+            links = soup.find_all('a', href=True)[:num_results]
+            print(f"🔍 DEBUG: Found {len(links)} total links")
+            for i, link in enumerate(links, 1):
+                title = link.get_text(strip=True)
+                url = link.get('href', '')
+                if title and url and len(title) > 10:  # Filter out navigation links
+                    results.append(f"{i}. **{title}**")
+                    results.append(f"   URL: {url}")
+                    results.append("")
         
-        # If no results from DuckDuckGo, provide a fallback
-        if not results:
-            results.append(f"🔍 **Search Results for '{query}':**")
+        if len(results) <= 1:  # Only has the header
             results.append("No specific results found. Consider:")
             results.append("• Refining your search terms")
             results.append("• Using more specific keywords")
             results.append("• Checking spelling")
         
+        print(f"🔍 DEBUG: Returning {len(results)} result lines")
         return "\n".join(results)
         
+    except ImportError:
+        # If BeautifulSoup is not available, fall back to simple approach
+        return f"🔍 **Search Results for '{query}':**\nSearch functionality requires BeautifulSoup. Please install it with: pip install beautifulsoup4"
     except requests.RequestException as e:
         return f"Error performing web search: Network error - {str(e)}"
     except Exception as e:
@@ -192,7 +208,7 @@ async def add_calendar_event(title: str, start_time: str, end_time: str, access_
         if attendees:
             event['attendees'] = [{'email': email} for email in attendees]
         created_event = schedule_handler.schedule_service.client.events().insert(calendarId='primary', body=event).execute()
-        return f"Event '{title}' added to calendar from {start_time} to {end_time}. Link: {created_event.get('htmlLink', 'N/A')}"
+        return f"Event '{title}' was successfully added to calendar from {start_time} to {end_time}. Link: {created_event.get('htmlLink', 'N/A')}"
     except Exception as e:
         return f"Error adding calendar event: {str(e)}"
 
@@ -384,7 +400,7 @@ Return ONLY a JSON array of tool names, like: ["tool1", "tool2"]"""
     
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",  # Use cheaper model for tool selection
+            model="gpt-4",  # Use cheaper model for tool selection
             messages=messages,
             max_tokens=100,
             temperature=0.1
@@ -486,19 +502,19 @@ async def execute_tool_calling_agent(
             f"Today is {today_str}.\n"
             "You are an advanced assistant with access to the following tools. \n"
             "You may call one tool at a time, and after each call you will see the result. \n"
+            "CRITICAL: You MUST respond ONLY in valid JSON format. Never respond in natural language.\n"
             "IMPORTANT: After each tool call, analyze the result and decide what to do next:\n"
             "- If the result contains useful information, use it to call another tool or provide a final answer\n"
             "- If the result shows no data found, try a different approach or ask the user for clarification\n"
             "- If you are done, reply with a final message to the user\n"
             "- If you need more clarification, ask the user\n"
-            "You do NOT need to ask the user for access_token or refresh_token. These will be provided automatically to any tool that needs them.\n"
+            "You do NOT need to ask the user for access_token, refresh_token, or user_email. These will be provided automatically to any tool that needs them.\n"
+            "DO NOT include user_email in your JSON responses - it will be injected automatically.\n"
             "If you repeat the same tool call and arguments more than twice, stop and ask for clarification.\n"
-            "When you want to use a tool, reply with a JSON object like:\n"
-            '{"tool": "tool_name", "args": {...}}' + "\n"
-            "When you are done, reply with:\n"
-            '{"final": "your final message to the user"}' + "\n"
-            "If you need more information from the user, reply with:\n"
-            '{"final": "Could you clarify..."}' + "\n"
+            "RESPONSE FORMATS (JSON ONLY):\n"
+            "To use a tool: {\"tool\": \"tool_name\", \"args\": {...}}\n"
+            "To finish: {\"final\": \"your final message to the user\"}\n"
+            "To ask for clarification: {\"final\": \"Could you clarify...\"}\n"
             "Use get_* functions (like get_calendar_events, get_email_metadata) when not doing explicit/literal string queries. Use search_* functions only for strict, explicit queries.\n"
             "Remember: You have access to the user's credentials automatically. Do not ask for them."
         )
@@ -528,7 +544,7 @@ async def execute_tool_calling_agent(
             model="gpt-4",
             messages=messages,
             max_tokens=500,
-            temperature=0.1
+            temperature=0.0  # Set to 0 for more consistent JSON responses
         )
         
         content = response.choices[0].message.content.strip()
@@ -544,7 +560,33 @@ async def execute_tool_calling_agent(
         try:
             # Try to parse as JSON
             if content.startswith('{') and content.endswith('}'):
-                parsed = json.loads(content)
+                # Clean the content to handle newlines and special characters
+                # First try the original content
+                try:
+                    parsed = json.loads(content)
+                except json.JSONDecodeError:
+                    # If that fails, try to fix common issues
+                    # Replace literal newlines in string values with escaped newlines
+                    import re
+                    
+                    # More robust approach: find all string values and escape newlines
+                    def fix_json_strings(match):
+                        # Get the string content (without quotes)
+                        string_content = match.group(1)
+                        # Escape newlines and carriage returns
+                        fixed_content = string_content.replace('\n', '\\n').replace('\r', '\\r')
+                        return f'"{fixed_content}"'
+                    
+                    # Find all quoted strings and fix them
+                    cleaned_content = re.sub(r'"([^"\\]*(?:\\.[^"\\]*)*)"', fix_json_strings, content)
+                    
+                    try:
+                        parsed = json.loads(cleaned_content)
+                    except json.JSONDecodeError:
+                        # If still failing, try a more aggressive approach
+                        # Replace all newlines with spaces
+                        cleaned_content = content.replace('\n', ' ').replace('\r', ' ')
+                        parsed = json.loads(cleaned_content)
                 
                 if "final" in parsed:
                     # Agent is done
@@ -628,9 +670,12 @@ async def execute_tool_calling_agent(
                 # Not JSON, treat as final response
                 return content, {"type": "multistep_complete", "steps": steps}, False
                 
-        except json.JSONDecodeError:
-            # Not valid JSON, treat as final response
-            return content, {"type": "multistep_complete", "steps": steps}, False
+        except json.JSONDecodeError as e:
+            # Not valid JSON, provide helpful error message
+            error_msg = f"I received an invalid response format. Please try again. The system expects JSON responses only."
+            print(f"JSON decode error. Raw response: {content}")
+            print(f"JSON decode error details: {str(e)}")
+            return error_msg, {"type": "multistep_error", "error": "invalid_json_format"}, False
     
     # Max steps reached
     return "I've reached the maximum number of steps. Could you break this down into smaller tasks?", {"type": "multistep_error", "error": "max_steps_reached"}, False
@@ -733,14 +778,14 @@ add_calendar_event_tool = Tool(
 
 note_email_tool = Tool(
     name="note_email",
-    description="Send a note email to the user themselves. Useful for reminders, notes, or saving important information.",
+    description="Send a note email to the user themselves. Useful for reminders, notes, or saving important information. DO NOT include user_email in your JSON - it will be provided automatically.",
     func=note_email,
     parameters={
         "type": "object",
         "properties": {
             "subject": {"type": "string", "description": "Email subject line"},
             "body": {"type": "string", "description": "Email body content"},
-            "user_email": {"type": "string", "description": "User's email address to send to"},
+            "user_email": {"type": "string", "description": "User's email address to send to (provided automatically)"},
             "access_token": {"type": "string", "description": "Gmail access token (provided automatically)"},
             "refresh_token": {"type": "string", "description": "Gmail refresh token (provided automatically)"}
         },

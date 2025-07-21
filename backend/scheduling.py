@@ -86,7 +86,7 @@ class ScheduleIntentHandler:
         Return ONLY ONE WORD from the choices above.
         '''
         response = self.openai_client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": message}
@@ -118,7 +118,7 @@ class ScheduleIntentHandler:
         You are an assistant that extracts scheduling details from the user's last inputs. Your job is to guess title, start_time, end_time, and attendees from natural text. 
         Then, list any missing or unclear fields and generate a polite confirmation message asking the user to confirm or correct.
         Strictly use ISO 8601 format for times. This means, each time NEEDS A DATE. If the date is unclear, prompt the user. 
-        If no specific date is given, then default to today's date. If no end_time is given, assume the event will last one hour.
+        If no specific date is given, then default to today's date ({datetime.now().strftime('%Y-%m-%d')}). If no end_time is given, assume the event will last one hour.
 
         REQUIRED FIELDS: title, start_time
         OPTIONAL FIELDS: end_time, attendees
@@ -126,14 +126,14 @@ class ScheduleIntentHandler:
         Reply *only* with valid JSON. Example:
 
         "title": "...",
-        "start_time": "...",   // ISO-8601, if not ISO-8601, convert first. It must be this format.
-        "end_time": "...",     // ISO-8601, if not ISO-8601, convert first. It must be this format. or null (optional)
+        "start_time": "...",   // ISO-8601 format like "2025-01-20T22:00:00", use current date if no date specified
+        "end_time": "...",     // ISO-8601 format like "2025-01-20T23:00:00", or null (optional)
         "attendees": ["email1", ...], // optional
         "missing_fields": ["start_time", ...], // only include required fields that are missing
         "confirmation_message": "..."
 
         If there are any current known details, merge them with the JSON that you will return.
-        MAKE SURE THE START/END TIMES ARE IN A FORMAT like this "2025-07-14T22:00:00"
+        IMPORTANT: Always use the current date ({datetime.now().strftime('%Y-%m-%d')}) when no specific date is mentioned in the user's message.
         """
         user_prompt = f"User message: {message}"
         messages = [
@@ -146,7 +146,7 @@ class ScheduleIntentHandler:
                 "content": f"Current known details (JSON): {json.dumps(pending_changes)}"
             })
         response = self.openai_client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-3.5-turbo",
             messages=messages,
             temperature=0.4
         )
@@ -168,16 +168,16 @@ class ScheduleIntentHandler:
         system_prompt = f'''
         Today is {today_str}.
         Extract the date or date range from the user's message. Return valid JSON like:
-        {{"time_min": "2025-07-16T00:00:00Z", "time_max": "2025-07-16T23:59:59Z"}}
+        {{"time_min": "{today_str}T00:00:00Z", "time_max": "{today_str}T23:59:59Z"}}
         or for a range:
-        {{"time_min": "2025-07-16T00:00:00Z", "time_max": "2025-07-20T23:59:59Z"}}
+        {{"time_min": "{today_str}T00:00:00Z", "time_max": "{(datetime.now(eastern) + timedelta(days=4)).strftime('%Y-%m-%d')}T23:59:59Z"}}
         If no date is given, use today's date as time_min and 7 days from today as time_max.
         All times must be in ISO 8601 format with Z (UTC).
         '''
         user_prompt = f"User message: {message}"
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -256,7 +256,7 @@ class ScheduleIntentHandler:
                 "content": f"Current known details (JSON): {json.dumps(pending_changes)}"
             })
         response = self.openai_client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-3.5-turbo",
             messages=messages,
             temperature=0.4
         )
@@ -342,7 +342,7 @@ class ScheduleIntentHandler:
                 "content": f"Current known details (JSON): {json.dumps(pending_changes)}"
             })
         response = self.openai_client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-3.5-turbo",
             messages=messages,
             temperature=0.4
         )
@@ -372,14 +372,14 @@ class ScheduleIntentHandler:
     async def get_events(self, message: str) -> List[Dict]:
         """Get events for a specific day, week, etc. based on user message, returning a list of event dictionaries."""
         # Use OpenAI to extract the period (day, week, month) and the reference date from the message
-        system_prompt = '''
+        system_prompt = f'''
         Extract the period (day, week, month) and the reference date from the user's message. Return valid JSON like:
-        {"period": "day", "date": "2025-07-16"}
+        {{"period": "day", "date": "{today_str}"}}
         If no date is given, use today's date. Period must be one of: day, week, month.
         '''
         user_prompt = f"User message: {message}"
         response = self.openai_client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -437,14 +437,14 @@ class ScheduleIntentHandler:
     async def summarize_events_intent(self, message: str) -> str:
         """Summarize events for a specific day, week, etc. based on user message, using LLM for a word summary."""
         # Use OpenAI to extract the period (day, week, month) and the reference date from the message
-        system_prompt = '''
+        system_prompt = f'''
         Extract the period (day, week, month) and the reference date from the user's message. Return valid JSON like:
-        {"period": "day", "date": "2025-07-16"}
+        {{"period": "day", "date": "{today_str}"}}
         If no date is given, use today's date. Period must be one of: day, week, month.
         '''
         user_prompt = f"User message: {message}"
         response = self.openai_client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -495,7 +495,7 @@ class ScheduleIntentHandler:
             {json.dumps(event_summaries, indent=2)}
             """
             summary_response = self.openai_client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are an assistant that summarizes calendar events for users."},
                     {"role": "user", "content": summary_prompt}

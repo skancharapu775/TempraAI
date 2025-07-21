@@ -81,7 +81,7 @@ class EmailIntentHandler:
         """
         
         response = self.openai_client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": message}
@@ -142,7 +142,7 @@ class EmailIntentHandler:
             """
             
             response = self.openai_client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": summary_prompt}],
                 max_tokens=500,
                 temperature=0.7
@@ -231,7 +231,7 @@ class EmailIntentHandler:
             ]
 
             response = self.openai_client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-3.5-turbo",
                 messages=messages,
                 max_tokens=300,
                 temperature=0.3
@@ -325,7 +325,7 @@ class EmailIntentHandler:
             """
             
             response = self.openai_client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": search_prompt}],
                 max_tokens=200,
                 temperature=0.3
@@ -429,7 +429,7 @@ class EmailIntentHandler:
             })
 
         response = self.openai_client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-3.5-turbo",
             messages=messages,
             temperature=0.4
         )
@@ -535,7 +535,7 @@ class EmailIntentHandler:
             })
 
         response = self.openai_client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-3.5-turbo",
             messages=messages,
             temperature=0.4
         )

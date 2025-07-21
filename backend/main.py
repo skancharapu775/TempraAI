@@ -107,7 +107,7 @@ async def classify_intent_for_message(client, message: str, conversation_history
     print(f"DEBUG: Classifying intent for message: '{message}'")
     print(f"DEBUG: Messages sent to LLM: {messages}")
     response = client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-3.5-turbo",
         messages=messages,
         max_tokens=20,
         temperature=0.1
@@ -127,9 +127,9 @@ async def check_intent_continuation(client, current_intent: str, message: str, c
         Available intents:
         - "Schedule": Scheduling meetings, appointments, or events. For any scheduling related activities, remember to use ISO-8601
         - "Remind": Setting reminders or creating todos
-        - "Email": Sending, drafting, or composing emails
+        - "Email": Sending, drafting, summarizing, or composing emails
         - "Todo": An item to be added, removed, or deleted from the todo list
-        - "Multistep": Multi-step or multi-tool workflows, or requests that span multiple intents (e.g., "Find all emails from John and add a reminder to reply to each one", "Search my calendar for meetings tomorrow and email me a summary")
+        - "Multistep": Multi-step or multi-tool workflows, or requests that span multiple intents (e.g., "Find all emails from John and add a reminder to reply to each one", "Search my calendar for meetings tomorrow and email me a summary", "Search google for market news and email it to me")
         - "General": General conversation, questions, or other topics
 
         Rules:
@@ -164,7 +164,7 @@ async def check_intent_continuation(client, current_intent: str, message: str, c
     messages.append({"role": "user", "content": message})
     print(f"DEBUG: Checking intent continuation for '{current_intent}' with message: '{message}'")
     response = client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-3.5-turbo",
         messages=messages,
         max_tokens=10,
         temperature=0.1
@@ -235,7 +235,7 @@ async def handle_remind_intent(client, message: str, pending_changes: dict = Non
         })
 
     response = client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-3.5-turbo",
         messages=messages,
         temperature=0.4
     )
@@ -286,7 +286,7 @@ async def handle_general_chat(client, message: str, conversation_history: List[d
     messages.append({"role": "user", "content": message})
     
     response = client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-3.5-turbo",
         messages=messages,
         max_tokens=300,
         temperature=0.7

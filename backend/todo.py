@@ -61,7 +61,7 @@ class TodoHandler:
         Return ONLY ONE WORD from the choices above.
         """
         response = self.openai_client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": message}
@@ -132,7 +132,7 @@ class TodoHandler:
         Only reply with the todo name
         OR reply with none"""
         response = self.openai_client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=30,
             temperature=0
